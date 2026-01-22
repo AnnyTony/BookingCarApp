@@ -6,42 +6,54 @@ import plotly.graph_objects as go
 # --- 1. CẤU HÌNH TRANG & CSS (Làm đẹp giao diện) ---
 st.set_page_config(page_title="Fleet Management Dashboard", page_icon="🚘", layout="wide")
 
-# CSS tùy chỉnh để ẩn menu mặc định và làm đẹp metrics
+# CSS tùy chỉnh: Chỉnh màu nền Sidebar, làm bo tròn các khung
 st.markdown("""
 <style>
-    .main {background-color: #f8f9fa;}
-    .stMetric {
-        background-color: #ffffff;
-        padding: 15px;
-        border-radius: 10px;
-        border: 1px solid #e0e0e0;
-        box-shadow: 2px 2px 5px rgba(0,0,0,0.05);
+    /* Chỉnh giao diện Sidebar */
+    [data-testid="stSidebar"] {
+        background-color: #f0f2f6;
     }
-    div[data-testid="stMetricValue"] {font-size: 24px; color: #007bff;}
-    h1, h2, h3 {font-family: 'Segoe UI', sans-serif; color: #2c3e50;}
+    [data-testid="stSidebar"] h1 {
+        font-size: 20px;
+        color: #1f77b4;
+    }
+    
+    /* Chỉnh Metric Cards */
+    div[data-testid="stMetricValue"] {
+        font-size: 24px;
+        color: #007bff;
+        font-weight: bold;
+    }
+    
+    /* Header chính */
+    .main-header {
+        font-family: 'Helvetica Neue', sans-serif;
+        color: #2c3e50;
+    }
 </style>
 """, unsafe_allow_html=True)
 
 # --- 2. HEADER ---
-col_head1, col_head2 = st.columns([3, 1])
+# Logo và Tiêu đề
+col_head1, col_head2 = st.columns([4, 1])
 with col_head1:
-    st.title("🚘 Fleet Operations Dashboard")
-    st.markdown("Hệ thống báo cáo & Giám sát hoạt động đội xe")
+    st.markdown("<h1 class='main-header'>🚘 Fleet Operations Center</h1>", unsafe_allow_html=True)
+    st.markdown("Dashboard phân tích hiệu suất và điều phối đội xe")
 with col_head2:
-    st.image("https://cdn-icons-png.flaticon.com/512/741/741407.png", width=80) # Logo giả lập
-    st.caption("Last updated: Live")
+    # Bạn có thể thay link ảnh logo công ty bạn vào đây
+    st.image("https://cdn-icons-png.flaticon.com/512/3097/3097180.png", width=70)
 
 st.divider()
 
 # --- 3. UPLOAD DATA ---
-uploaded_file = st.file_uploader("📂 Import Dữ liệu Booking (Excel/CSV)", type=['xlsx', 'csv'])
+uploaded_file = st.file_uploader("📂 Import Dữ liệu Booking (Kéo thả file vào đây)", type=['xlsx', 'csv'])
 
 if uploaded_file is None:
-    st.info("👈 Vui lòng tải file dữ liệu lên để xem báo cáo.")
+    st.info("👈 Vui lòng tải file dữ liệu lên để bắt đầu.")
     st.stop()
 
-# --- XỬ LÝ DỮ LIỆU ---
-@st.cache_data # Cache để tăng tốc độ load khi filter
+# --- XỬ LÝ DỮ LIỆU (Cache để chạy nhanh) ---
+@st.cache_data 
 def load_data(file):
     try:
         if file.name.endswith('.csv'):
@@ -66,38 +78,72 @@ def load_data(file):
         return str(e)
 
 df = load_data(uploaded_file)
-if isinstance(df, str): # Nếu trả về chuỗi lỗi
+if isinstance(df, str): 
     st.error(f"Lỗi dữ liệu: {df}")
     st.stop()
 
 df_assigned = df.dropna(subset=['Biển số xe'])
 
-# --- 4. SIDEBAR & FILTERS ---
+# --- 4. SIDEBAR "XỊN" (ĐÃ NÂNG CẤP) ---
 with st.sidebar:
-    st.header("🎛️ Bộ Lọc Điều Khiển")
+    st.markdown("## 🎛️ Bảng Điều Khiển")
     
-    # Filter Thời gian
-    min_date = df_assigned['Start_Datetime'].min().date()
-    max_date = df_assigned['End_Datetime'].max().date()
-    
-    date_range = st.date_input("📅 Khoảng thời gian", value=(min_date, max_date), min_value=min_date, max_value=max_date)
-    
-    # Filter Xe
-    all_cars = sorted(df_assigned['Biển số xe'].astype(str).unique())
-    selected_cars = st.multiselect("🚘 Chọn xe", options=all_cars, default=all_cars, placeholder="Chọn biển số...")
-    
-    st.markdown("---")
-    st.caption("Developed with Streamlit & Plotly")
+    # Gom nhóm 1: Thời gian
+    with st.expander("📆 Lọc Thời Gian", expanded=True):
+        min_date = df_assigned['Start_Datetime'].min().date()
+        max_date = df_assigned['End_Datetime'].max().date()
+        
+        date_range = st.date_input(
+            "Chọn khoảng ngày:",
+            value=(min_date, max_date),
+            min_value=min_date,
+            max_value=max_date
+        )
 
-# ÁP DỤNG FILTER
-if len(date_range) == 2:
+    # Gom nhóm 2: Xe (Có nút chọn tất cả)
+    with st.expander("🚗 Lọc Theo Xe", expanded=True):
+        all_cars = sorted(df_assigned['Biển số xe'].astype(str).unique())
+        
+        # Nút gạt chọn tất cả (Tiện lợi hơn multiselect thường)
+        select_all_cars = st.toggle("Chọn tất cả xe", value=True)
+        
+        if select_all_cars:
+            selected_cars = all_cars
+            st.caption(f"Đang chọn toàn bộ {len(all_cars)} xe")
+        else:
+            selected_cars = st.multiselect(
+                "Chọn xe cụ thể:",
+                options=all_cars,
+                default=all_cars[:5] # Mặc định chọn 5 xe đầu nếu bỏ tick all
+            )
+
+    # Nút Reset (Thực ra là reload trang)
+    if st.button("🔄 Reset Bộ Lọc", type="primary", use_container_width=True):
+        st.rerun()
+    
+    # Footer nhỏ
+    st.markdown("---")
+    st.markdown(f"**Dữ liệu gốc:** {len(df_assigned)} dòng")
+
+
+# --- XỬ LÝ LOGIC LỌC ---
+# 1. Lọc ngày
+if isinstance(date_range, tuple) and len(date_range) == 2:
     start_d, end_d = date_range
     mask_date = (df_assigned['Start_Datetime'].dt.date >= start_d) & (df_assigned['Start_Datetime'].dt.date <= end_d)
-else:
+elif isinstance(date_range, tuple) and len(date_range) == 1:
     mask_date = (df_assigned['Start_Datetime'].dt.date == date_range[0])
+else:
+    mask_date = pd.Series([True] * len(df_assigned)) # Fallback
 
+# 2. Lọc xe
 mask_car = df_assigned['Biển số xe'].isin(selected_cars)
+
+# DataFrame cuối cùng
 df_filtered = df_assigned[mask_date & mask_car]
+
+# Hiển thị thông báo trạng thái ở Sidebar (Feedback loop)
+st.sidebar.success(f"🔍 Tìm thấy: **{len(df_filtered)}** chuyến")
 
 if df_filtered.empty:
     st.warning("⚠️ Không có dữ liệu nào khớp với bộ lọc hiện tại.")
@@ -108,86 +154,78 @@ total_trips = len(df_filtered)
 total_hours = df_filtered['Duration_Hours'].sum()
 avg_duration = df_filtered['Duration_Hours'].mean()
 
-# Tính Overlap
+# Overlap logic
 df_sorted = df_filtered.sort_values(by=['Biển số xe', 'Start_Datetime'])
 df_sorted['Prev_End'] = df_sorted.groupby('Biển số xe')['End_Datetime'].shift(1)
 overlaps = df_sorted[df_sorted['Start_Datetime'] < df_sorted['Prev_End']]
 overlap_count = len(overlaps)
 overlap_rate = (overlap_count / total_trips * 100) if total_trips > 0 else 0
 
-# --- 6. DASHBOARD CHÍNH ---
+# --- 6. DASHBOARD CONTENT ---
 
-# A. Hàng KPI Metrics
+# A. Metrics
 col1, col2, col3, col4 = st.columns(4)
-col1.metric("Tổng Số Chuyến", f"{total_trips}", "chuyến")
-col2.metric("Tổng Giờ Vận Hành", f"{total_hours:,.0f}", "giờ")
-col3.metric("Thời Gian TB/Chuyến", f"{avg_duration:.1f}", "giờ")
-col4.metric("Cảnh Báo Trùng (Overlap)", f"{overlap_count}", f"{overlap_rate:.1f}%", delta_color="inverse")
+col1.metric("Tổng Số Chuyến", f"{total_trips}")
+col2.metric("Tổng Giờ Vận Hành", f"{total_hours:,.0f}h")
+col3.metric("TB Một Chuyến", f"{avg_duration:.1f}h")
+col4.metric("Trùng Lịch (Overlap)", f"{overlap_count}", f"{overlap_rate:.1f}%", delta_color="inverse")
 
-st.markdown("### 📈 Phân Tích Hiệu Suất")
+st.markdown("---")
 
-# B. Hàng Biểu đồ 1 (Timeline & Xe)
-c1, c2 = st.columns([2, 1])
+# B. Tabs Biểu đồ
+tab1, tab2, tab3 = st.tabs(["📊 Hiệu Suất Vận Hành", "👥 Phân Tích User", "⚠️ Cảnh Báo Trùng"])
 
-with c1:
-    # Biểu đồ cột theo tháng (Dùng Plotly)
-    monthly_data = df_filtered.groupby('Month_Year')['Duration_Hours'].sum().reset_index()
-    fig_month = px.bar(monthly_data, x='Month_Year', y='Duration_Hours', 
-                       title="Tổng giờ hoạt động theo Tháng",
-                       labels={'Month_Year': 'Tháng', 'Duration_Hours': 'Số giờ'},
-                       color='Duration_Hours', color_continuous_scale='Blues')
-    fig_month.update_layout(xaxis_title="", yaxis_title="Giờ", height=350)
-    st.plotly_chart(fig_month, use_container_width=True)
+with tab1:
+    c1, c2 = st.columns([7, 3])
+    with c1:
+        # Biểu đồ diễn biến theo tháng
+        monthly = df_filtered.groupby('Month_Year')['Duration_Hours'].sum().reset_index()
+        fig_month = px.bar(monthly, x='Month_Year', y='Duration_Hours', 
+                           title="Tổng giờ hoạt động theo Tháng",
+                           text_auto='.0f',
+                           color='Duration_Hours', color_continuous_scale='Blues')
+        fig_month.update_layout(height=400, xaxis_title="", yaxis_title="")
+        st.plotly_chart(fig_month, use_container_width=True)
+    
+    with c2:
+        # Tỷ trọng xe
+        car_counts = df_filtered['Biển số xe'].value_counts().reset_index().head(10)
+        car_counts.columns = ['Xe', 'Số chuyến']
+        fig_pie = px.pie(car_counts, values='Số chuyến', names='Xe', title="Top Xe hoạt động", hole=0.5)
+        fig_pie.update_layout(height=400, showlegend=False)
+        st.plotly_chart(fig_pie, use_container_width=True)
 
-with c2:
-    # Biểu đồ Pie/Donut tỷ lệ xe
-    car_counts = df_filtered['Biển số xe'].value_counts().reset_index()
-    car_counts.columns = ['Biển số xe', 'Số chuyến']
-    fig_pie = px.pie(car_counts.head(10), values='Số chuyến', names='Biển số xe', 
-                     title="Top 10 Xe hoạt động nhiều nhất",
-                     hole=0.4, color_discrete_sequence=px.colors.qualitative.Pastel)
-    fig_pie.update_layout(height=350, showlegend=False)
-    st.plotly_chart(fig_pie, use_container_width=True)
-
-# C. Hàng Biểu đồ 2 (Heatmap & User)
-st.markdown("### 👥 Phân Tích Người Dùng & Thời Điểm")
-c3, c4 = st.columns([1, 1])
-
-with c3:
-    # Heatmap Ngày trong tuần vs Giờ
-    # Tạo cột Giờ bắt đầu (làm tròn)
-    df_filtered['Hour_Start'] = df_filtered['Start_Datetime'].dt.hour
-    heatmap_data = df_filtered.groupby(['Day_Name', 'Hour_Start']).size().reset_index(name='Counts')
-    # Sắp xếp thứ tự ngày
+    # Heatmap
+    st.subheader("Bản đồ nhiệt: Mật độ đặt xe")
+    df_filtered['Hour'] = df_filtered['Start_Datetime'].dt.hour
+    heatmap_data = df_filtered.groupby(['Day_Name', 'Hour']).size().reset_index(name='Count')
     days_order = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
     
-    fig_heat = px.density_heatmap(heatmap_data, x='Hour_Start', y='Day_Name', z='Counts',
-                                  title="Bản đồ nhiệt: Mật độ đặt xe (Thứ vs Giờ)",
-                                  category_orders={'Day_Name': days_order},
-                                  color_continuous_scale='Viridis')
-    fig_heat.update_layout(height=400)
+    fig_heat = px.density_heatmap(heatmap_data, x='Hour', y='Day_Name', z='Count',
+                                  color_continuous_scale='Viridis',
+                                  category_orders={'Day_Name': days_order})
     st.plotly_chart(fig_heat, use_container_width=True)
 
-with c4:
-    # Top User (Horizontal Bar)
+with tab2:
     if 'Người sử dụng xe' in df_filtered.columns:
-        user_data = df_filtered.groupby('Người sử dụng xe')['Duration_Hours'].sum().nlargest(10).reset_index()
-        fig_user = px.bar(user_data, x='Duration_Hours', y='Người sử dụng xe', orientation='h',
-                          title="Top 10 Người sử dụng (Theo giờ)",
+        user_stats = df_filtered.groupby('Người sử dụng xe')['Duration_Hours'].sum().nlargest(15).sort_values()
+        fig_user = px.bar(user_stats, x='Duration_Hours', y=user_stats.index, orientation='h',
+                          title="Top 15 Người sử dụng nhiều nhất (Giờ)",
                           text_auto='.0f',
                           color='Duration_Hours', color_continuous_scale='Sunset')
-        fig_user.update_layout(yaxis={'categoryorder':'total ascending'}, height=400)
+        fig_user.update_layout(height=600, yaxis_title="")
         st.plotly_chart(fig_user, use_container_width=True)
     else:
-        st.warning("Thiếu cột 'Người sử dụng xe'")
+        st.info("File dữ liệu không có cột 'Người sử dụng xe'")
 
-# --- 7. CHI TIẾT OVERLAP (EXPANDER) ---
-with st.expander("⚠️ Xem chi tiết Danh sách Xe bị trùng lịch (Overlap)", expanded=False):
+with tab3:
     if overlap_count > 0:
+        st.error(f"Phát hiện {overlap_count} trường hợp trùng lịch xe:")
+        # Format lại bảng cho đẹp
+        display_cols = ['Ngày khởi hành', 'Biển số xe', 'Tên tài xế', 'Start_Datetime', 'End_Datetime', 'Prev_End']
         st.dataframe(
-            overlaps[['Ngày khởi hành', 'Biển số xe', 'Tên tài xế', 'Start_Datetime', 'End_Datetime', 'Prev_End']]
-            .style.background_gradient(cmap='Reds', subset=['Start_Datetime']),
+            overlaps[display_cols].style.background_gradient(cmap='Reds', subset=['Start_Datetime']),
             use_container_width=True
         )
     else:
-        st.success("Không có trường hợp nào bị trùng lịch.")
+        st.success("✅ Không có chuyến xe nào bị trùng giờ trong bộ lọc hiện tại.")
