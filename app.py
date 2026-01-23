@@ -35,53 +35,46 @@ def process_data(file):
         xls = pd.ExcelFile(file)
         
         # A. ĐỌC DỮ LIỆU TỪ CÁC SHEET
-        # 1. Driver (Tìm header 'Biển số xe')
-        # Đọc thử sheet Driver
+        # 1. Driver
         df_driver_raw = pd.read_excel(xls, sheet_name='Driver', header=None)
-        # Tìm dòng chứa header thật
         try:
+            # Tìm dòng chứa 'Biển số xe'
             header_idx = df_driver_raw[df_driver_raw.eq("Biển số xe").any(axis=1)].index[0]
         except:
-            header_idx = 2 # Mặc định
+            header_idx = 2 
         df_driver = pd.read_excel(xls, sheet_name='Driver', header=header_idx)
         
-        # 2. CBNV & Booking (Header cố định)
+        # 2. CBNV & Booking
         df_cbnv = pd.read_excel(xls, sheet_name='CBNV', header=1)
         df_booking = pd.read_excel(xls, sheet_name='Booking car', header=0)
 
-        # B. LÀM SẠCH (Fix lỗi Duplicate Labels)
-        
+        # B. LÀM SẠCH
         # --- Driver ---
         df_driver.columns = df_driver.columns.str.replace('\n', ' ').str.strip()
         if 'Cost center' in df_driver.columns: 
             df_driver.rename(columns={'Cost center': 'Cost Center Driver'}, inplace=True)
-        # Loại bỏ xe trùng, giữ dòng cuối
         if 'Biển số xe' in df_driver.columns:
             df_driver = df_driver.drop_duplicates(subset=['Biển số xe'], keep='last')
         
         # --- CBNV ---
-        # Loại bỏ NV trùng tên
         if 'Full Name' in df_cbnv.columns:
             df_cbnv = df_cbnv.drop_duplicates(subset=['Full Name'], keep='first')
 
         # C. MERGE DỮ LIỆU
-        # Merge Booking - Driver
         df_final = df_booking.merge(df_driver, on='Biển số xe', how='left', suffixes=('', '_Driver'))
-        
-        # Merge Booking - CBNV
         df_final = df_final.merge(df_cbnv, left_on='Người sử dụng xe', right_on='Full Name', how='left')
 
-        # D. XỬ LÝ THÊM
+        # D. XỬ LÝ CỘT VÀ LỖI FORMAT
         df_final['Ngày khởi hành'] = pd.to_datetime(df_final['Ngày khởi hành'], errors='coerce')
         df_final['Tháng'] = df_final['Ngày khởi hành'].dt.strftime('%Y-%m')
         
-        # Điền dữ liệu thiếu cho biểu đồ Sunburst
+        # Điền dữ liệu thiếu & ÉP KIỂU VỀ STRING ĐỂ TRÁNH LỖI SORTED
         cols_fill = {'Location': 'Unknown', 'Công ty': 'Other', 'BU': 'Other'}
         for col, val in cols_fill.items():
             if col in df_final.columns:
-                df_final[col] = df_final[col].fillna(val)
+                df_final[col] = df_final[col].fillna(val).astype(str) # Quan trọng: .astype(str)
         
-        # Tạo cột phân loại "Nội thành/Tỉnh"
+        # Tạo cột phân loại
         def phan_loai(route):
             s = str(route).lower()
             if 'tỉnh' in s or ('tp.' in s and 'hồ chí minh' not in s): return 'Đi Tỉnh'
@@ -103,22 +96,23 @@ if uploaded_file is not None:
     df = process_data(uploaded_file)
     
     if not df.empty:
-        # --- BỘ LỌC DRILL-DOWN ---
+        # --- BỘ LỌC DRILL-DOWN (ĐÃ FIX LỖI SORT) ---
         st.sidebar.markdown("---")
         st.sidebar.header("🔍 Bộ Lọc Drill-down")
         
-        # Level 1
-        locs = sorted(df['Location'].unique())
+        # Level 1: Location
+        # Dùng astype(str) trước khi unique() để đảm bảo không bị lỗi so sánh
+        locs = sorted(df['Location'].astype(str).unique())
         sel_loc = st.sidebar.multiselect("1. Khu Vực", locs, default=locs)
         df_l1 = df[df['Location'].isin(sel_loc)]
         
-        # Level 2
-        comps = sorted(df_l1['Công ty'].unique())
+        # Level 2: Công Ty
+        comps = sorted(df_l1['Công ty'].astype(str).unique())
         sel_comp = st.sidebar.multiselect("2. Công Ty", comps, default=comps)
         df_l2 = df_l1[df_l1['Công ty'].isin(sel_comp)]
         
-        # Level 3
-        bus = sorted(df_l2['BU'].unique())
+        # Level 3: BU (Nơi gây ra lỗi cũ)
+        bus = sorted(df_l2['BU'].astype(str).unique())
         sel_bu = st.sidebar.multiselect("3. Bộ Phận (BU)", bus, default=bus)
         df_filtered = df_l2[df_l2['BU'].isin(sel_bu)]
         
@@ -127,7 +121,10 @@ if uploaded_file is not None:
         with col1: 
             st.markdown(f"<div class='kpi-card'><div class='kpi-value'>{len(df_filtered)}</div><div class='kpi-label'>Tổng Chuyến</div></div>", unsafe_allow_html=True)
         with col2: 
-            top_user = df_filtered['Người sử dụng xe'].mode()[0] if not df_filtered.empty else "-"
+            if not df_filtered.empty:
+                top_user = df_filtered['Người sử dụng xe'].mode()[0]
+            else:
+                top_user = "-"
             st.markdown(f"<div class='kpi-card'><div class='kpi-value' style='font-size:20px'>{top_user}</div><div class='kpi-label'>Top User</div></div>", unsafe_allow_html=True)
         with col3: 
             st.markdown(f"<div class='kpi-card'><div class='kpi-value'>{df_filtered['Biển số xe'].nunique()}</div><div class='kpi-label'>Xe Hoạt Động</div></div>", unsafe_allow_html=True)
@@ -147,6 +144,8 @@ if uploaded_file is not None:
                 if not df_filtered.empty:
                     fig = px.sunburst(df_filtered, path=['Location', 'Công ty', 'BU'], height=500, title="Tương tác để xem chi tiết")
                     st.plotly_chart(fig, use_container_width=True)
+                else:
+                    st.info("Chưa có dữ liệu.")
             with c2:
                 st.subheader("Treemap: Phân bổ Số chuyến")
                 if not df_filtered.empty:
@@ -158,16 +157,17 @@ if uploaded_file is not None:
             c1, c2 = st.columns([2,1])
             with c1:
                 st.subheader("Xu hướng theo Tháng")
-                if 'Tháng' in df_filtered.columns:
+                if 'Tháng' in df_filtered.columns and not df_filtered.empty:
                     df_trend = df_filtered.groupby('Tháng').size().reset_index(name='Count')
                     fig = px.area(df_trend, x='Tháng', y='Count', markers=True)
                     st.plotly_chart(fig, use_container_width=True)
             with c2:
                 st.subheader("Tỷ lệ Lộ trình")
-                df_pie = df_filtered['Phạm Vi'].value_counts().reset_index()
-                df_pie.columns = ['Phạm Vi', 'Count']
-                fig = px.pie(df_pie, values='Count', names='Phạm Vi', hole=0.5)
-                st.plotly_chart(fig, use_container_width=True)
+                if not df_filtered.empty:
+                    df_pie = df_filtered['Phạm Vi'].value_counts().reset_index()
+                    df_pie.columns = ['Phạm Vi', 'Count']
+                    fig = px.pie(df_pie, values='Count', names='Phạm Vi', hole=0.5)
+                    st.plotly_chart(fig, use_container_width=True)
                 
         with tab3:
             st.dataframe(df_filtered)
@@ -175,5 +175,4 @@ if uploaded_file is not None:
     else:
         st.warning("File Excel không chứa dữ liệu hợp lệ hoặc lỗi đọc file.")
 else:
-    # Màn hình chờ khi chưa upload file
     st.info("👋 Vui lòng tải file 'Booking car.xlsx' lên để bắt đầu phân tích!")
