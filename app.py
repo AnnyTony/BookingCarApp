@@ -6,7 +6,7 @@ import plotly.graph_objects as go
 # --- 1. CẤU HÌNH TRANG ---
 st.set_page_config(page_title="Executive Fleet Dashboard", page_icon="🚘", layout="wide")
 
-# CSS: Flat Design & KPI Cards (Lấy từ code của bạn + tinh chỉnh)
+# CSS: Flat Design & KPI Cards
 st.markdown("""
 <style>
     .block-container {padding-top: 1rem; padding-bottom: 2rem;}
@@ -35,20 +35,20 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# --- 2. HÀM XỬ LÝ DỮ LIỆU THÔNG MINH (Kết hợp Logic của mình + Driver của bạn) ---
+# --- 2. HÀM XỬ LÝ DỮ LIỆU THÔNG MINH ---
 @st.cache_data
 def load_data_ultimate(file):
     try:
         xl = pd.ExcelFile(file, engine='openpyxl')
         
-        # 1. Tìm tên sheet linh hoạt (Tránh lỗi nếu user đổi tên sheet)
+        # 1. Tìm tên sheet linh hoạt
         sheet_driver = next((s for s in xl.sheet_names if 'driver' in s.lower() or 'tài xế' in s.lower()), None)
         sheet_booking = next((s for s in xl.sheet_names if 'booking' in s.lower()), None)
         sheet_cbnv = next((s for s in xl.sheet_names if 'cbnv' in s.lower() or 'staff' in s.lower()), None)
         
         if not sheet_booking: return "❌ Không tìm thấy sheet 'Booking car'."
 
-        # --- Hàm đọc Header thông minh (Quét 10 dòng đầu) ---
+        # --- Hàm đọc Header thông minh ---
         def smart_read(excel, sheet_name, keywords):
             df_preview = excel.parse(sheet_name, header=None, nrows=10)
             header_idx = 0
@@ -59,19 +59,17 @@ def load_data_ultimate(file):
                     break
             return excel.parse(sheet_name, header=header_idx)
 
-        # 2. Đọc & Xử lý Driver (Của bạn)
+        # 2. Đọc Driver
         if sheet_driver:
             df_driver = smart_read(xl, sheet_driver, ['biển số xe', 'tên tài xế'])
-            # Clean cột
             df_driver.columns = df_driver.columns.str.strip().str.replace('\n', ' ')
             df_driver = df_driver.drop_duplicates(subset=['Biển số xe'], keep='last')
         else:
             df_driver = pd.DataFrame()
 
-        # 3. Đọc & Xử lý CBNV (Của bạn + Map cột thông minh)
+        # 3. Đọc CBNV
         if sheet_cbnv:
             df_cbnv = smart_read(xl, sheet_cbnv, ['full name', 'họ tên', 'công ty'])
-            # Map tên cột chuẩn
             col_map = {}
             for c in df_cbnv.columns:
                 c_low = str(c).lower()
@@ -84,15 +82,13 @@ def load_data_ultimate(file):
         else:
             df_cbnv = pd.DataFrame()
 
-        # 4. Đọc Booking & Merge
+        # 4. Đọc Booking
         df_bk = smart_read(xl, sheet_booking, ['ngày khởi hành', 'giờ khởi hành'])
         df_bk.columns = df_bk.columns.str.strip()
 
-        # Merge dữ liệu (Driver + CBNV)
         # Merge Driver
         if not df_driver.empty and 'Biển số xe' in df_driver.columns:
             df_final = pd.merge(df_bk, df_driver[['Biển số xe', 'Tên tài xế']], on='Biển số xe', how='left', suffixes=('', '_Driver'))
-            # Ưu tiên tên tài xế trong booking, nếu ko có lấy từ bảng Driver
             if 'Tên tài xế_Driver' in df_final.columns:
                 df_final['Tên tài xế'] = df_final['Tên tài xế'].fillna(df_final['Tên tài xế_Driver'])
         else:
@@ -103,16 +99,16 @@ def load_data_ultimate(file):
             df_final = pd.merge(df_final, df_cbnv[['Full Name', 'Công ty', 'BU', 'Location']], 
                                 left_on='Người sử dụng xe', right_on='Full Name', how='left')
             
-            # Fillna
+            # --- FIX LỖI TYPE ERROR Ở ĐÂY ---
+            # Ép kiểu dữ liệu sang String để tránh lỗi khi sắp xếp (sorted)
             for col in ['Công ty', 'BU', 'Location']:
-                df_final[col] = df_final[col].fillna('Unknown')
+                df_final[col] = df_final[col].fillna('Unknown').astype(str)
         else:
             df_final['Công ty'] = 'No Data'
             df_final['BU'] = 'No Data'
             df_final['Location'] = 'Unknown'
 
-        # --- LOGIC TÍNH TOÁN (CỦA MÌNH - QUAN TRỌNG) ---
-        # 1. Ngày giờ
+        # --- LOGIC TÍNH TOÁN ---
         df_final['Start_Datetime'] = pd.to_datetime(df_final['Ngày khởi hành'].astype(str) + ' ' + df_final['Giờ khởi hành'].astype(str), errors='coerce')
         df_final['End_Datetime'] = pd.to_datetime(df_final['Ngày khởi hành'].astype(str) + ' ' + df_final['Giờ kết thúc'].astype(str), errors='coerce')
         mask_overnight = df_final['End_Datetime'] < df_final['Start_Datetime']
@@ -120,8 +116,6 @@ def load_data_ultimate(file):
         
         df_final['Duration_Hours'] = (df_final['End_Datetime'] - df_final['Start_Datetime']).dt.total_seconds() / 3600
         df_final['Tháng'] = df_final['Start_Datetime'].dt.strftime('%Y-%m')
-        
-        # 2. Phân loại
         df_final['Loại Chuyến'] = df_final['Duration_Hours'].apply(lambda x: 'Nửa ngày' if x <= 4 else 'Cả ngày')
         
         def check_scope(route):
@@ -147,30 +141,31 @@ if uploaded_file:
         st.error(df)
         st.stop()
         
-    # --- A. BỘ LỌC CASCADING (TRONG EXPANDER) ---
+    # --- A. BỘ LỌC CASCADING ---
     with st.expander("🔍 BỘ LỌC DỮ LIỆU (Nhấn để mở rộng)", expanded=True):
         f1, f2, f3 = st.columns(3)
         with f1:
-            locs = sorted(df['Location'].unique())
+            # Ép kiểu string lần nữa cho chắc chắn
+            locs = sorted(df['Location'].astype(str).unique())
             sel_loc = st.multiselect("1. Khu Vực (Location)", locs, default=locs)
             df_l1 = df[df['Location'].isin(sel_loc)]
         with f2:
-            comps = sorted(df_l1['Công ty'].unique())
+            comps = sorted(df_l1['Công ty'].astype(str).unique())
             sel_comp = st.multiselect("2. Công Ty", comps, default=comps)
             df_l2 = df_l1[df_l1['Công ty'].isin(sel_comp)]
         with f3:
-            bus = sorted(df_l2['BU'].unique())
+            bus = sorted(df_l2['BU'].astype(str).unique())
             sel_bu = st.multiselect("3. Phòng Ban (BU)", bus, default=bus)
             df_filtered = df_l2[df_l2['BU'].isin(sel_bu)]
             
         st.caption(f"Đang hiển thị: {len(df_filtered)} chuyến đi")
 
-    # --- B. KPI CARDS (LOGIC CỦA MÌNH + UI CỦA BẠN) ---
-    # Logic Occupancy (Tính toán thông minh)
-    total_cars = 21 # Mặc định
+    # --- B. KPI CARDS ---
+    total_cars = 21 
     if len(sel_loc) == 1:
-        if 'HCM' in sel_loc[0] or 'NAM' in sel_loc[0].upper(): total_cars = 16
-        elif 'HN' in sel_loc[0] or 'BAC' in sel_loc[0].upper(): total_cars = 5
+        loc_str = str(sel_loc[0]).upper()
+        if 'HCM' in loc_str or 'NAM' in loc_str: total_cars = 16
+        elif 'HN' in loc_str or 'BAC' in loc_str: total_cars = 5
     
     if 'Start_Datetime' in df_filtered.columns and not df_filtered.empty:
         days = (df_filtered['Start_Datetime'].max() - df_filtered['Start_Datetime'].min()).days + 1
@@ -189,10 +184,9 @@ if uploaded_file:
 
     # --- C. PHÂN TÍCH CHUYÊN SÂU ---
     
-    # 1. BIỂU ĐỒ SANKEY (Luồng dữ liệu - Của bạn)
+    # 1. BIỂU ĐỒ SANKEY
     st.markdown("<div class='section-header'>📊 LUỒNG PHÂN BỔ: VÙNG ➔ CÔNG TY ➔ BU</div>", unsafe_allow_html=True)
     if not df_filtered.empty:
-        # Tạo dữ liệu Sankey
         sankey_data1 = df_filtered.groupby(['Location', 'Công ty']).size().reset_index(name='val')
         sankey_data1.columns = ['source', 'target', 'val']
         sankey_data2 = df_filtered.groupby(['Công ty', 'BU']).size().reset_index(name='val')
@@ -214,7 +208,6 @@ if uploaded_file:
     
     with c1:
         st.markdown("<div class='section-header'>📈 LOẠI CHUYẾN & PHẠM VI</div>", unsafe_allow_html=True)
-        # Biểu đồ cột chồng (Logic của mình)
         df_type = df_filtered.groupby(['Công ty', 'Loại Chuyến']).size().reset_index(name='Count')
         fig_bar = px.bar(df_type, x='Công ty', y='Count', color='Loại Chuyến', title="Nửa ngày vs Cả ngày", barmode='group')
         st.plotly_chart(fig_bar, use_container_width=True)
