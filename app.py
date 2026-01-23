@@ -53,7 +53,11 @@ def load_data_pro(file):
         def check_scope(route):
             s = str(route).lower()
             return "Đi Tỉnh" if any(x in s for x in ['tỉnh', 'tp.', 'bình dương', 'đồng nai', 'vũng tàu']) else "Nội thành"
-        df_bk['Phạm Vi'] = df_bk['Lộ trình'].apply(check_scope) if 'Lộ trình' in df_bk.columns else "Unknown"
+        
+        if 'Lộ trình' in df_bk.columns:
+            df_bk['Phạm Vi'] = df_bk['Lộ trình'].apply(check_scope) 
+        else:
+            df_bk['Phạm Vi'] = "Unknown"
 
         # 2. Merge CBNV
         if sheet_cbnv:
@@ -233,6 +237,7 @@ with t2:
     # Heatmap Xe
     st.subheader("Hiệu suất sử dụng từng xe (Top 15)")
     if 'Biển số xe' in df_final_filtered.columns:
-        car_ usage = df_final_filtered.groupby('Biển số xe')['Duration_Hours'].sum().reset_index().sort_values('Duration_Hours', ascending=False).head(15)
+        # Đã sửa lỗi biến ở dòng này
+        car_usage = df_final_filtered.groupby('Biển số xe')['Duration_Hours'].sum().reset_index().sort_values('Duration_Hours', ascending=False).head(15)
         fig_car = px.bar(car_usage, x='Biển số xe', y='Duration_Hours', color='Duration_Hours', title="Top 15 xe hoạt động nhiều nhất (Giờ)", color_continuous_scale='Viridis')
         st.plotly_chart(fig_car, use_container_width=True)
