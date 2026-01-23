@@ -1,261 +1,196 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-import plotly.graph_objects as go
+import numpy as np
 
 # --- 1. CẤU HÌNH TRANG ---
-st.set_page_config(page_title="Power BI Style Dashboard", page_icon="📊", layout="wide")
+st.set_page_config(page_title="Fleet Management Dashboard", page_icon="🚗", layout="wide")
 
+# CSS giao diện chuẩn Power BI
 st.markdown("""
 <style>
-    .main-header {font-size: 26px; font-weight: bold; color: #2c3e50;}
-    div[data-testid="stMetricValue"] {font-size: 22px; color: #2980b9;}
-    [data-testid="stSidebar"] {background-color: #f1f3f6;}
-    .stTabs [data-baseweb="tab-list"] {gap: 10px;}
-    .stTabs [data-baseweb="tab"] {height: 50px; background-color: white; border-radius: 4px; box-shadow: 0px 1px 3px rgba(0,0,0,0.1);}
-    .stTabs [aria-selected="true"] {background-color: #e3f2fd; color: #1976d2;}
+    .main-header {font-size: 24px; font-weight: bold; color: #2c3e50; margin-bottom: 20px;}
+    .kpi-card {background-color: white; padding: 15px; border-radius: 8px; border-left: 5px solid #007bff; box-shadow: 0 2px 4px rgba(0,0,0,0.1);}
+    .kpi-value {font-size: 24px; font-weight: bold; color: #007bff;}
+    .kpi-label {font-size: 14px; color: #6c757d;}
+    [data-testid="stSidebar"] {background-color: #f8f9fa;}
 </style>
 """, unsafe_allow_html=True)
 
-st.markdown("<div class='main-header'>📊 Fleet Management Intelligence (Power BI Style)</div>", unsafe_allow_html=True)
-st.markdown("---")
+st.markdown("<div class='main-header'>🚗 Fleet Management Intelligence (Drill-down Edition)</div>", unsafe_allow_html=True)
 
-# --- 2. HÀM LOAD DATA (ĐÃ SỬA LỖI HEADER) ---
+# --- 2. HÀM LOAD & XỬ LÝ DỮ LIỆU ---
 @st.cache_data
-def load_data_pro(file):
+def load_data():
     try:
-        xl = pd.ExcelFile(file, engine='openpyxl')
+        # A. ĐỌC DỮ LIỆU
+        # Tự động tìm header cho Driver
+        df_driver_raw = pd.read_csv("Booking car.xlsx - Driver.csv", header=None)
+        # Tìm dòng chứa chữ "Biển số xe" để làm header
+        header_idx = df_driver_raw[df_driver_raw.eq("Biển số xe").any(axis=1)].index[0]
+        df_driver = pd.read_csv("Booking car.xlsx - Driver.csv", header=header_idx)
         
-        # Tìm tên sheet linh hoạt
-        sheet_booking = next((s for s in xl.sheet_names if 'booking' in s.lower()), None)
-        sheet_cbnv = next((s for s in xl.sheet_names if 'cbnv' in s.lower() or 'staff' in s.lower()), None)
+        df_cbnv = pd.read_csv("Booking car.xlsx - CBNV.csv", header=1)
+        df_booking = pd.read_csv("Booking car.xlsx - Booking car.csv")
+
+        # B. LÀM SẠCH (FIX LỖI DUPLICATE LABEL)
+        # 1. Driver
+        cols_driver = ['Biển số xe', 'Loại nhiên liệu', 'Cost \ncenter', 'Tên tài xế']
+        cols_driver = [c for c in cols_driver if c in df_driver.columns]
+        df_driver = df_driver[cols_driver].dropna(subset=['Biển số xe']).drop_duplicates(subset=['Biển số xe'], keep='last')
+        if 'Cost \ncenter' in df_driver.columns:
+            df_driver.rename(columns={'Cost \ncenter': 'Cost Center'}, inplace=True)
+
+        # 2. CBNV
+        cols_cbnv = ['Full Name', 'Location', 'Công ty', 'BU', 'Position EN']
+        cols_cbnv = [c for c in cols_cbnv if c in df_cbnv.columns]
+        df_cbnv = df_cbnv[cols_cbnv].dropna(subset=['Full Name']).drop_duplicates(subset=['Full Name'], keep='first')
+
+        # C. MERGE DATA
+        df_final = df_booking.merge(df_driver, on='Biển số xe', how='left')
+        df_final = df_final.merge(df_cbnv, left_on='Người sử dụng xe', right_on='Full Name', how='left')
+
+        # D. TÍNH TOÁN CỘT MỚI (PHỤC HỒI TÍNH NĂNG CŨ)
+        # 1. Xử lý ngày tháng
+        df_final['Ngày khởi hành'] = pd.to_datetime(df_final['Ngày khởi hành'], errors='coerce')
+        df_final['Tháng'] = df_final['Ngày khởi hành'].dt.strftime('%Y-%m')
         
-        if not sheet_booking: return "Lỗi: Không tìm thấy sheet chứa dữ liệu Booking."
-
-        # === HÀM PHỤ: TÌM DÒNG TIÊU ĐỀ ===
-        def find_header_and_read(excel_file, sheet_name, keywords):
-            # Đọc thử 5 dòng đầu để tìm header
-            df_temp = excel_file.parse(sheet_name, header=None, nrows=10)
-            header_idx = 0
-            found = False
+        # 2. Tính thời gian chạy (Duration)
+        # Giả sử format là HH:MM:SS, cần convert sang timedelta
+        for col in ['Giờ khởi hành', 'Giờ kết thúc']:
+            df_final[col] = pd.to_datetime(df_final[col], format='%H:%M:%S', errors='coerce').dt.time
             
-            for i, row in df_temp.iterrows():
-                row_str = row.astype(str).str.lower().tolist()
-                # Nếu dòng này chứa từ khóa quan trọng (vd: 'full name', 'biển số xe')
-                if any(k in ' '.join(row_str) for k in keywords):
-                    header_idx = i
-                    found = True
-                    break
-            
-            # Đọc lại với header đúng
-            return excel_file.parse(sheet_name, header=header_idx)
-
-        # 1. XỬ LÝ SHEET BOOKING
-        df_bk = find_header_and_read(xl, sheet_booking, ['ngày khởi hành', 'biển số', 'date'])
-        df_bk.columns = df_bk.columns.str.strip() # Xóa khoảng trắng thừa
+        # Hàm tính giờ đơn giản (nếu lỗi thì trả về 0)
+        def calc_hours(row):
+            try:
+                t1 = pd.to_timedelta(str(row['Giờ khởi hành']))
+                t2 = pd.to_timedelta(str(row['Giờ kết thúc']))
+                return (t2 - t1).total_seconds() / 3600
+            except:
+                return 0
         
-        # Xử lý ngày giờ
-        try:
-            df_bk['Start_Datetime'] = pd.to_datetime(df_bk['Ngày khởi hành'].astype(str) + ' ' + df_bk['Giờ khởi hành'].astype(str), errors='coerce')
-            df_bk['End_Datetime'] = pd.to_datetime(df_bk['Ngày khởi hành'].astype(str) + ' ' + df_bk['Giờ kết thúc'].astype(str), errors='coerce')
-            
-            # Xử lý qua đêm
-            mask_overnight = df_bk['End_Datetime'] < df_bk['Start_Datetime']
-            df_bk.loc[mask_overnight, 'End_Datetime'] += pd.Timedelta(days=1)
-            
-            df_bk['Duration_Hours'] = (df_bk['End_Datetime'] - df_bk['Start_Datetime']).dt.total_seconds() / 3600
-            df_bk['Month_Year'] = df_bk['Start_Datetime'].dt.to_period('M').astype(str)
-            df_bk['Year'] = df_bk['Start_Datetime'].dt.year
-        except:
-            pass # Bỏ qua nếu lỗi ngày tháng để app vẫn chạy
+        df_final['Số giờ'] = df_final.apply(calc_hours, axis=1)
+        df_final['Số giờ'] = df_final['Số giờ'].apply(lambda x: x if x > 0 else 0) # Lọc số âm
 
-        df_bk['Loại Chuyến'] = df_bk['Duration_Hours'].apply(lambda x: 'Nửa ngày' if x <= 4 else 'Cả ngày')
-
-        # Logic Đi Tỉnh / Nội Thành
-        def check_scope(route):
-            s = str(route).lower()
-            if any(x in s for x in ['tỉnh', 'tp.', 'bình dương', 'đồng nai', 'vũng tàu', 'long an', 'tiền giang', 'bắc ninh']):
-                return "Đi Tỉnh"
-            return "Nội thành"
+        # 3. Phân loại Lộ trình (Tạo cột 'Phạm Vi' cho biểu đồ Donut)
+        # Logic: Nếu lộ trình chứa tên tỉnh khác -> Đi tỉnh, ngược lại -> Nội thành
+        def classify_route(route):
+            route = str(route).lower()
+            if 'tỉnh' in route or 'tp.' in route and ('hcm' not in route and 'hà nội' not in route):
+                return 'Đi Tỉnh'
+            return 'Nội Thành'
         
-        if 'Lộ trình' in df_bk.columns:
-            df_bk['Phạm Vi'] = df_bk['Lộ trình'].apply(check_scope) 
-        else:
-            df_bk['Phạm Vi'] = "Unknown"
+        df_final['Phạm Vi'] = df_final['Lộ trình'].apply(classify_route)
 
-        # 2. XỬ LÝ SHEET CBNV & MERGE
-        if sheet_cbnv:
-            # Tự tìm header có chữ 'Full Name' hoặc 'Họ tên'
-            df_staff = find_header_and_read(xl, sheet_cbnv, ['full name', 'họ tên', 'email', 'công ty'])
-            df_staff.columns = df_staff.columns.str.strip()
-            
-            # Map tên cột (Chuẩn hóa)
-            col_map = {}
-            for c in df_staff.columns:
-                c_lower = c.lower()
-                if 'full name' in c_lower or 'họ tên' in c_lower: col_map[c] = 'Full Name'
-                elif 'công ty' in c_lower or 'company' in c_lower: col_map[c] = 'Công ty_L'
-                elif 'bu' in c_lower or 'bộ phận' in c_lower: col_map[c] = 'BoPhan_L'
-                elif 'location' in c_lower or 'site' in c_lower: col_map[c] = 'Location_L'
-            
-            df_staff = df_staff.rename(columns=col_map)
-            
-            # Kiểm tra xem đã map đủ cột chưa, nếu thiếu thì tạo cột rỗng để không bị lỗi Key Error
-            for req_col in ['Full Name', 'Công ty_L', 'BoPhan_L', 'Location_L']:
-                if req_col not in df_staff.columns:
-                    df_staff[req_col] = "Unknown"
+        # Điền dữ liệu trống để vẽ Sunburst không lỗi
+        df_final['Location'] = df_final['Location'].fillna('Unknown')
+        df_final['Công ty'] = df_final['Công ty'].fillna('Other')
+        df_final['BU'] = df_final['BU'].fillna('Other')
 
-            # Merge Booking với Staff
-            df_final = pd.merge(df_bk, df_staff[['Full Name', 'Công ty_L', 'BoPhan_L', 'Location_L']], 
-                                left_on='Người sử dụng xe', right_on='Full Name', how='left')
-            
-            # Điền dữ liệu
-            df_final['Công ty'] = df_final['Công ty_L'].fillna('Chưa xác định')
-            df_final['Bộ phận'] = df_final['BoPhan_L'].fillna('Chưa xác định')
-            
-            # Logic Bắc/Nam
-            def get_region(loc):
-                loc = str(loc).upper()
-                if 'HCM' in loc or 'NAM' in loc or 'HO CHI MINH' in loc: return 'Miền Nam'
-                if 'HN' in loc or 'BẮC' in loc or 'HANOI' in loc: return 'Miền Bắc'
-                return 'Khác'
-            
-            df_final['Vùng Miền'] = df_final['Location_L'].apply(get_region)
-            
-        else:
-            df_final = df_bk
-            df_final['Công ty'] = "No Data"
-            df_final['Bộ phận'] = "No Data"
-            df_final['Vùng Miền'] = "Khác"
-            
         return df_final
 
     except Exception as e:
-        return f"Lỗi xử lý file: {str(e)}"
+        st.error(f"Có lỗi khi xử lý dữ liệu: {e}")
+        return pd.DataFrame()
 
-# --- 3. UPLOAD ---
-uploaded_file = st.file_uploader("📂 Upload file Excel (Booking + CBNV)", type=['xlsx'])
-if not uploaded_file:
-    st.info("👋 Vui lòng tải file dữ liệu để bắt đầu.")
-    st.stop()
+df = load_data()
 
-df = load_data_pro(uploaded_file)
-if isinstance(df, str):
-    st.error(df)
-    st.stop()
-
-# --- 4. SIDEBAR "CASCADING" (BỘ LỌC) ---
-with st.sidebar:
-    st.header("🎛️ Bộ lọc Điều khiển")
+if not df.empty:
+    # --- 3. BỘ LỌC PHÂN CẤP (SIDEBAR) ---
+    st.sidebar.header("🔍 Bộ Lọc Drill-down")
     
-    # 1. Chọn Năm
-    if 'Year' in df.columns:
-        years = sorted(df['Year'].dropna().unique())
-        selected_years = st.multiselect("Năm:", years, default=years)
-        df_lv1 = df[df['Year'].isin(selected_years)]
-    else:
-        df_lv1 = df
+    # Level 1
+    locs = sorted(df['Location'].unique())
+    sel_loc = st.sidebar.multiselect("1. Khu Vực", locs, default=locs)
+    df_1 = df[df['Location'].isin(sel_loc)]
     
-    # 2. Chọn Vùng Miền
-    if 'Vùng Miền' in df_lv1.columns:
-        regions = ['Tất cả'] + sorted(list(df_lv1['Vùng Miền'].unique()))
-        selected_region = st.selectbox("Vùng Miền:", regions)
-        if selected_region != 'Tất cả':
-            df_lv2 = df_lv1[df_lv1['Vùng Miền'] == selected_region]
-        else:
-            df_lv2 = df_lv1
-    else:
-        df_lv2 = df_lv1
-        selected_region = 'Khác'
-        
-    # 3. Chọn Công Ty
-    avail_companies = sorted(df_lv2['Công ty'].astype(str).unique())
-    selected_companies = st.multiselect("Công ty:", avail_companies, default=avail_companies)
+    # Level 2
+    comps = sorted(df_1['Công ty'].unique())
+    sel_comp = st.sidebar.multiselect("2. Công Ty", comps, default=comps)
+    df_2 = df_1[df_1['Công ty'].isin(sel_comp)]
     
-    # 4. Chọn Bộ Phận
-    if selected_companies:
-        df_lv3 = df_lv2[df_lv2['Công ty'].isin(selected_companies)]
-    else:
-        df_lv3 = df_lv2
+    # Level 3
+    bus = sorted(df_2['BU'].unique())
+    sel_bu = st.sidebar.multiselect("3. Bộ Phận (BU)", bus, default=bus)
+    df_filtered = df_2[df_2['BU'].isin(sel_bu)]
+
+    # --- 4. KPI SUMMARY ---
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        st.markdown(f"<div class='kpi-card'><div class='kpi-value'>{len(df_filtered):,}</div><div class='kpi-label'>Tổng Chuyến Đi</div></div>", unsafe_allow_html=True)
+    with col2:
+        total_hours = df_filtered['Số giờ'].sum()
+        st.markdown(f"<div class='kpi-card'><div class='kpi-value'>{total_hours:,.0f}h</div><div class='kpi-label'>Tổng Giờ Vận Hành</div></div>", unsafe_allow_html=True)
+    with col3:
+        top_driver = df_filtered['Tên tài xế'].mode()[0] if not df_filtered.empty else "-"
+        st.markdown(f"<div class='kpi-card'><div class='kpi-value' style='font-size:18px'>{top_driver}</div><div class='kpi-label'>Tài Xế Chạy Nhiều Nhất</div></div>", unsafe_allow_html=True)
+    with col4:
+        avg_trip = len(df_filtered) / df_filtered['Biển số xe'].nunique() if not df_filtered.empty else 0
+        st.markdown(f"<div class='kpi-card'><div class='kpi-value'>{avg_trip:.1f}</div><div class='kpi-label'>Trung bình chuyến/xe</div></div>", unsafe_allow_html=True)
+
+    st.markdown("---")
+
+    # --- 5. VISUALIZATION TABS ---
+    tab1, tab2 = st.tabs(["📊 Cấu Trúc Tổ Chức (Drill-down)", "📈 Hiệu Suất & Xu Hướng"])
+
+    # TAB 1: SUNBURST & TREEMAP (YÊU CẦU CỦA BẠN)
+    with tab1:
+        c1, c2 = st.columns(2)
+        with c1:
+            st.subheader("Phân rã chi phí theo cấu trúc")
+            if not df_filtered.empty:
+                fig_sun = px.sunburst(
+                    df_filtered, 
+                    path=['Location', 'Công ty', 'BU'], 
+                    title="Cấu trúc: Vùng -> Công ty -> BU",
+                    height=500
+                )
+                st.plotly_chart(fig_sun, use_container_width=True)
         
-    avail_depts = sorted(df_lv3['Bộ phận'].astype(str).unique())
-    selected_depts = st.multiselect("Phòng ban/Bộ phận:", avail_depts, default=avail_depts)
+        with c2:
+            st.subheader("Tỷ trọng theo Bộ phận")
+            if not df_filtered.empty:
+                df_tree = df_filtered.groupby(['Location', 'Công ty', 'BU']).size().reset_index(name='Count')
+                fig_tree = px.treemap(
+                    df_tree, 
+                    path=['Location', 'Công ty', 'BU'], 
+                    values='Count',
+                    color='Count',
+                    color_continuous_scale='RdBu',
+                    title="Diện tích thể hiện số lượng chuyến đi"
+                )
+                st.plotly_chart(fig_tree, use_container_width=True)
 
-    # Filter Final
-    if selected_depts:
-        df_final_filtered = df_lv3[df_lv3['Bộ phận'].isin(selected_depts)]
-    else:
-        df_final_filtered = df_lv3
+    # TAB 2: CÁC BIỂU ĐỒ CŨ (KHÔI PHỤC)
+    with tab2:
+        c3, c4 = st.columns([2, 1])
+        with c3:
+            st.subheader("Xu hướng sử dụng xe theo tháng")
+            if not df_filtered.empty:
+                # Group by Month và tính tổng số giờ hoặc số chuyến
+                df_trend = df_filtered.groupby('Tháng').agg({'SPid': 'count', 'Số giờ': 'sum'}).reset_index()
+                # Vẽ 2 đường: Số chuyến và Số giờ
+                fig_line = px.line(df_trend, x='Tháng', y='SPid', markers=True, title="Số lượng chuyến đi")
+                fig_line.add_bar(x=df_trend['Tháng'], y=df_trend['Số giờ'], name="Tổng giờ", opacity=0.3)
+                st.plotly_chart(fig_line, use_container_width=True)
         
-    st.success(f"🔍 Dữ liệu: {len(df_final_filtered)} chuyến")
+        with c4:
+            st.subheader("Tỷ lệ Nội thành vs Đi Tỉnh")
+            if 'Phạm Vi' in df_filtered.columns and not df_filtered.empty:
+                df_pie = df_filtered['Phạm Vi'].value_counts().reset_index()
+                df_pie.columns = ['Loại', 'Số lượng']
+                fig_donut = px.pie(df_pie, values='Số lượng', names='Loại', hole=0.5, color_discrete_sequence=px.colors.sequential.RdBu)
+                st.plotly_chart(fig_donut, use_container_width=True)
 
-# --- 5. TÍNH KPI ---
-if selected_region == 'Miền Nam': total_cars = 16
-elif selected_region == 'Miền Bắc': total_cars = 5
-else: total_cars = 21
+        st.subheader("Top 10 Xe hoạt động hiệu quả nhất")
+        if not df_filtered.empty:
+            top_cars = df_filtered.groupby('Biển số xe').agg({'Số giờ': 'sum', 'SPid': 'count'}).reset_index()
+            top_cars = top_cars.sort_values(by='Số giờ', ascending=False).head(10)
+            fig_bar = px.bar(top_cars, x='Số giờ', y='Biển số xe', orientation='h', 
+                             text='Số giờ', color='SPid', labels={'SPid': 'Số chuyến'},
+                             title="Xếp hạng theo tổng giờ vận hành")
+            fig_bar.update_layout(yaxis={'categoryorder':'total ascending'})
+            st.plotly_chart(fig_bar, use_container_width=True)
 
-if 'Start_Datetime' in df_final_filtered.columns and not df_final_filtered.empty:
-    days = (df_final_filtered['Start_Datetime'].max() - df_final_filtered['Start_Datetime'].min()).days + 1
-    days = max(days, 1)
-    cap_hours = total_cars * days * 9
-    used_hours = df_final_filtered['Duration_Hours'].sum()
-    occupancy = (used_hours / cap_hours * 100) if cap_hours > 0 else 0
 else:
-    occupancy = 0; used_hours = 0
-
-# --- 6. DASHBOARD ---
-c1, c2, c3, c4 = st.columns(4)
-c1.metric("Tổng Số Chuyến", len(df_final_filtered))
-c2.metric("Tổng Giờ Chạy", f"{used_hours:,.0f}h")
-c3.metric("Tỷ lệ Lấp Đầy", f"{occupancy:.1f}%")
-c4.metric("Số Xe Khả Dụng", f"{total_cars} xe")
-
-st.markdown("---")
-
-t1, t2 = st.tabs(["🏢 Cấu Trúc & Phân Bổ", "📈 Xu Hướng & Hiệu Suất"])
-
-with t1:
-    col_sun, col_tree = st.columns([1, 1])
-    with col_sun:
-        st.subheader("Phân bổ: Vùng > Công Ty > Bộ Phận")
-        df_sun = df_final_filtered.groupby(['Vùng Miền', 'Công ty', 'Bộ phận']).size().reset_index(name='Số chuyến')
-        df_sun = df_sun[df_sun['Số chuyến'] > 0]
-        fig_sun = px.sunburst(df_sun, path=['Vùng Miền', 'Công ty', 'Bộ phận'], values='Số chuyến', color='Số chuyến', color_continuous_scale='RdBu')
-        st.plotly_chart(fig_sun, use_container_width=True)
-        st.caption("💡 Click vào vòng tròn để xem chi tiết.")
-
-    with col_tree:
-        st.subheader("Trạng thái chuyến đi")
-        if 'Tình trạng đơn yêu cầu' in df_final_filtered.columns:
-            status_df = df_final_filtered['Tình trạng đơn yêu cầu'].fillna('Unknown').value_counts().reset_index()
-            status_df.columns = ['Status', 'Count']
-            color_map = {'CLOSED': 'green', 'APPROVED': 'blue', 'CANCELLED': 'red', 'REJECTED': 'darkred'}
-            fig_pie = px.pie(status_df, values='Count', names='Status', hole=0.5, color='Status', color_discrete_map=color_map)
-            st.plotly_chart(fig_pie, use_container_width=True)
-
-    st.subheader("Nửa ngày vs Cả ngày theo Công ty")
-    df_type = df_final_filtered.groupby(['Công ty', 'Loại Chuyến']).size().reset_index(name='Count')
-    fig_bar = px.bar(df_type, x='Công ty', y='Count', color='Loại Chuyến', barmode='group')
-    st.plotly_chart(fig_bar, use_container_width=True)
-
-with t2:
-    col_trend, col_map = st.columns([2, 1])
-    with col_trend:
-        st.subheader("Xu Hướng theo Tháng")
-        if 'Month_Year' in df_final_filtered.columns:
-            monthly = df_final_filtered.groupby('Month_Year')['Duration_Hours'].sum().reset_index()
-            fig_line = px.area(monthly, x='Month_Year', y='Duration_Hours', markers=True)
-            st.plotly_chart(fig_line, use_container_width=True)
-    
-    with col_map:
-        st.subheader("Nội thành vs Đi Tỉnh")
-        loc_counts = df_final_filtered['Phạm Vi'].value_counts().reset_index()
-        loc_counts.columns = ['Phạm Vi', 'Số chuyến']
-        fig_donut = px.pie(loc_counts, values='Số chuyến', names='Phạm Vi', hole=0.6)
-        st.plotly_chart(fig_donut, use_container_width=True)
-
-    st.subheader("Top 15 Xe hoạt động nhiều nhất")
-    if 'Biển số xe' in df_final_filtered.columns:
-        car_usage = df_final_filtered.groupby('Biển số xe')['Duration_Hours'].sum().reset_index().sort_values('Duration_Hours', ascending=False).head(15)
-        fig_car = px.bar(car_usage, x='Biển số xe', y='Duration_Hours', color='Duration_Hours', color_continuous_scale='Viridis')
-        st.plotly_chart(fig_car, use_container_width=True)
+    st.info("Đang chờ dữ liệu... Vui lòng kiểm tra file Excel.")
