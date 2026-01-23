@@ -32,6 +32,16 @@ st.markdown("""
         margin: 25px 0 15px 0; padding-left: 10px;
         border-left: 5px solid #0056b3;
     }
+    
+    /* Radio Button ngang đẹp hơn */
+    div.row-widget.stRadio > div {flex-direction: row; align-items: stretch;}
+    div.row-widget.stRadio > div[role="radiogroup"] > label[data-baseweb="radio"] {
+        background-color: #f8f9fa;
+        padding: 10px 20px;
+        margin-right: 10px;
+        border-radius: 5px;
+        border: 1px solid #dee2e6;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -98,9 +108,7 @@ def load_data_ultimate(file):
         if not df_cbnv.empty and 'Full Name' in df_cbnv.columns:
             df_final = pd.merge(df_final, df_cbnv[['Full Name', 'Công ty', 'BU', 'Location']], 
                                 left_on='Người sử dụng xe', right_on='Full Name', how='left')
-            
-            # --- FIX LỖI TYPE ERROR Ở ĐÂY ---
-            # Ép kiểu dữ liệu sang String để tránh lỗi khi sắp xếp (sorted)
+            # FIX LỖI TYPE ERROR: Ép kiểu dữ liệu sang String
             for col in ['Công ty', 'BU', 'Location']:
                 df_final[col] = df_final[col].fillna('Unknown').astype(str)
         else:
@@ -132,7 +140,7 @@ def load_data_ultimate(file):
         return f"Lỗi xử lý: {str(e)}"
 
 # --- 3. GIAO DIỆN CHÍNH ---
-st.markdown("### 🏢 HỆ THỐNG QUẢN TRỊ ĐỘI XE (ULTIMATE VERSION)")
+st.markdown("### 🏢 HỆ THỐNG QUẢN TRỊ ĐỘI XE (PRO VERSION)")
 uploaded_file = st.file_uploader("Upload file Excel (Booking, Driver, CBNV)", type=['xlsx'], label_visibility="collapsed")
 
 if uploaded_file:
@@ -145,7 +153,6 @@ if uploaded_file:
     with st.expander("🔍 BỘ LỌC DỮ LIỆU (Nhấn để mở rộng)", expanded=True):
         f1, f2, f3 = st.columns(3)
         with f1:
-            # Ép kiểu string lần nữa cho chắc chắn
             locs = sorted(df['Location'].astype(str).unique())
             sel_loc = st.multiselect("1. Khu Vực (Location)", locs, default=locs)
             df_l1 = df[df['Location'].isin(sel_loc)]
@@ -182,50 +189,72 @@ if uploaded_file:
     with k3: st.markdown(f"<div class='kpi-box'><div class='kpi-title'>Tỷ Lệ Lấp Đầy</div><div class='kpi-value'>{occupancy:.1f}%</div><div class='kpi-sub'>Trên {total_cars} xe</div></div>", unsafe_allow_html=True)
     with k4: st.markdown(f"<div class='kpi-box'><div class='kpi-title'>Xe Hoạt Động</div><div class='kpi-value'>{df_filtered['Biển số xe'].nunique()}/{total_cars}</div></div>", unsafe_allow_html=True)
 
-    # --- C. PHÂN TÍCH CHUYÊN SÂU ---
-    
-    # 1. BIỂU ĐỒ SANKEY
-    st.markdown("<div class='section-header'>📊 LUỒNG PHÂN BỔ: VÙNG ➔ CÔNG TY ➔ BU</div>", unsafe_allow_html=True)
-    if not df_filtered.empty:
-        sankey_data1 = df_filtered.groupby(['Location', 'Công ty']).size().reset_index(name='val')
-        sankey_data1.columns = ['source', 'target', 'val']
-        sankey_data2 = df_filtered.groupby(['Công ty', 'BU']).size().reset_index(name='val')
-        sankey_data2.columns = ['source', 'target', 'val']
-        links = pd.concat([sankey_data1, sankey_data2])
-        
-        nodes = list(pd.concat([links['source'], links['target']]).unique())
-        node_map = {node: i for i, node in enumerate(nodes)}
-        
-        fig_sankey = go.Figure(data=[go.Sankey(
-            node=dict(pad=15, thickness=20, line=dict(color="black", width=0.5), label=nodes, color="rgba(0,86,179,0.8)"),
-            link=dict(source=links['source'].map(node_map), target=links['target'].map(node_map), value=links['val'], color='rgba(0,86,179,0.2)')
-        )])
-        fig_sankey.update_layout(height=400, margin=dict(l=0,r=0,t=0,b=0))
-        st.plotly_chart(fig_sankey, use_container_width=True)
+    # --- C. PHÂN TÍCH CHUYÊN SÂU (ĐÃ KHÔI PHỤC TÍNH NĂNG CHỌN GÓC NHÌN CỦA BẠN) ---
+    st.markdown("<div class='section-header'>📊 PHÂN TÍCH CẤU TRÚC & PHÂN BỔ</div>", unsafe_allow_html=True)
 
-    # 2. XU HƯỚNG & CHI TIẾT
-    c1, c2 = st.columns([1, 1])
-    
-    with c1:
-        st.markdown("<div class='section-header'>📈 LOẠI CHUYẾN & PHẠM VI</div>", unsafe_allow_html=True)
-        df_type = df_filtered.groupby(['Công ty', 'Loại Chuyến']).size().reset_index(name='Count')
-        fig_bar = px.bar(df_type, x='Công ty', y='Count', color='Loại Chuyến', title="Nửa ngày vs Cả ngày", barmode='group')
-        st.plotly_chart(fig_bar, use_container_width=True)
+    # [KHÔI PHỤC] Nút chọn góc nhìn (View Mode)
+    view_mode = st.radio("Chọn góc nhìn phân tích:", 
+                         ["1. Tổng quan Luồng (Sankey)", "2. So sánh theo Công ty", "3. Chi tiết Phòng ban (Treemap)"], 
+                         horizontal=True)
 
-    with c2:
-        st.markdown("<div class='section-header'>🏆 TOP TÀI XẾ & NGƯỜI DÙNG</div>", unsafe_allow_html=True)
-        tab_driver, tab_user = st.tabs(["Tài Xế (Driver)", "Người Dùng (User)"])
+    if view_mode == "1. Tổng quan Luồng (Sankey)":
+        if not df_filtered.empty:
+            st.info("Biểu đồ luồng hiển thị sự phân bổ từ: Vùng → Công ty → Phòng ban")
+            sankey_data1 = df_filtered.groupby(['Location', 'Công ty']).size().reset_index(name='val')
+            sankey_data1.columns = ['source', 'target', 'val']
+            sankey_data2 = df_filtered.groupby(['Công ty', 'BU']).size().reset_index(name='val')
+            sankey_data2.columns = ['source', 'target', 'val']
+            links = pd.concat([sankey_data1, sankey_data2])
+            
+            nodes = list(pd.concat([links['source'], links['target']]).unique())
+            node_map = {node: i for i, node in enumerate(nodes)}
+            
+            fig_sankey = go.Figure(data=[go.Sankey(
+                node=dict(pad=15, thickness=20, line=dict(color="black", width=0.5), label=nodes, color="rgba(0,86,179,0.8)"),
+                link=dict(source=links['source'].map(node_map), target=links['target'].map(node_map), value=links['val'], color='rgba(0,86,179,0.2)')
+            )])
+            fig_sankey.update_layout(height=500, margin=dict(l=0,r=0,t=0,b=0))
+            st.plotly_chart(fig_sankey, use_container_width=True)
+
+    elif view_mode == "2. So sánh theo Công ty":
+        c1, c2 = st.columns(2)
+        with c1:
+            df_comp = df_filtered['Công ty'].value_counts().reset_index()
+            df_comp.columns = ['Công ty', 'Số chuyến']
+            fig = px.bar(df_comp, x='Số chuyến', y='Công ty', orientation='h', text='Số chuyến', 
+                         title="Top Công Ty sử dụng xe", color='Số chuyến', color_continuous_scale='Blues')
+            st.plotly_chart(fig, use_container_width=True)
+        with c2:
+            fig_pie = px.pie(df_comp, values='Số chuyến', names='Công ty', hole=0.4, title="Tỷ trọng giữa các Công ty")
+            st.plotly_chart(fig_pie, use_container_width=True)
+
+    elif view_mode == "3. Chi tiết Phòng ban (Treemap)":
+        # [KHÔI PHỤC] Biểu đồ Treemap xịn xò của bạn
+        st.write("Bảng nhiệt thể hiện cường độ sử dụng xe theo từng Công ty & Phòng ban")
+        if not df_filtered.empty:
+            pivot = df_filtered.groupby(['Công ty', 'BU']).size().reset_index(name='Số chuyến')
+            fig_tree = px.treemap(pivot, path=['Công ty', 'BU'], values='Số chuyến',
+                                  color='Công ty', 
+                                  title="Chi tiết từng Phòng ban (Diện tích = Số lượng)")
+            st.plotly_chart(fig_tree, use_container_width=True)
+
+    # --- D. XU HƯỚNG & CHI TIẾT ---
+    st.markdown("---")
+    st.markdown("<div class='section-header'>📈 DỮ LIỆU CHI TIẾT</div>", unsafe_allow_html=True)
+    
+    t1, t2 = st.columns([2, 1])
+    with t1:
+        st.write("**Xu hướng theo tháng**")
+        df_trend = df_filtered.groupby('Tháng').size().reset_index(name='Số chuyến')
+        fig_trend = px.area(df_trend, x='Tháng', y='Số chuyến', markers=True)
+        st.plotly_chart(fig_trend, use_container_width=True)
         
-        with tab_driver:
-            if 'Tên tài xế' in df_filtered.columns:
-                top_driver = df_filtered['Tên tài xế'].value_counts().head(5).reset_index()
-                top_driver.columns = ['Tài xế', 'Số chuyến']
-                st.dataframe(top_driver, use_container_width=True, hide_index=True)
-                
-        with tab_user:
-            top_user = df_filtered['Người sử dụng xe'].value_counts().head(5).reset_index()
-            top_user.columns = ['Nhân viên', 'Số chuyến']
-            st.dataframe(top_user, use_container_width=True, hide_index=True)
+    with t2:
+        st.write("**Top 5 Tài xế chạy nhiều nhất**")
+        if 'Tên tài xế' in df_filtered.columns:
+            top_driver = df_filtered['Tên tài xế'].value_counts().head(5).reset_index()
+            top_driver.columns = ['Tài xế', 'Số chuyến']
+            st.dataframe(top_driver, use_container_width=True, hide_index=True)
 
 else:
     st.info("👋 Hãy upload file Excel để bắt đầu phân tích.")
