@@ -108,7 +108,7 @@ def load_data_ultimate(file):
         if not df_cbnv.empty and 'Full Name' in df_cbnv.columns:
             df_final = pd.merge(df_final, df_cbnv[['Full Name', 'Công ty', 'BU', 'Location']], 
                                 left_on='Người sử dụng xe', right_on='Full Name', how='left')
-            # FIX LỖI TYPE ERROR: Ép kiểu dữ liệu sang String
+            # FIX LỖI TYPE ERROR
             for col in ['Công ty', 'BU', 'Location']:
                 df_final[col] = df_final[col].fillna('Unknown').astype(str)
         else:
@@ -140,7 +140,7 @@ def load_data_ultimate(file):
         return f"Lỗi xử lý: {str(e)}"
 
 # --- 3. GIAO DIỆN CHÍNH ---
-st.markdown("### 🏢 HỆ THỐNG QUẢN TRỊ ĐỘI XE (PRO VERSION)")
+st.markdown("### 🏢 HỆ THỐNG QUẢN TRỊ ĐỘI XE (FINAL FUSION)")
 uploaded_file = st.file_uploader("Upload file Excel (Booking, Driver, CBNV)", type=['xlsx'], label_visibility="collapsed")
 
 if uploaded_file:
@@ -189,17 +189,15 @@ if uploaded_file:
     with k3: st.markdown(f"<div class='kpi-box'><div class='kpi-title'>Tỷ Lệ Lấp Đầy</div><div class='kpi-value'>{occupancy:.1f}%</div><div class='kpi-sub'>Trên {total_cars} xe</div></div>", unsafe_allow_html=True)
     with k4: st.markdown(f"<div class='kpi-box'><div class='kpi-title'>Xe Hoạt Động</div><div class='kpi-value'>{df_filtered['Biển số xe'].nunique()}/{total_cars}</div></div>", unsafe_allow_html=True)
 
-    # --- C. PHÂN TÍCH CHUYÊN SÂU (ĐÃ KHÔI PHỤC TÍNH NĂNG CHỌN GÓC NHÌN CỦA BẠN) ---
+    # --- C. PHÂN TÍCH CHUYÊN SÂU ---
     st.markdown("<div class='section-header'>📊 PHÂN TÍCH CẤU TRÚC & PHÂN BỔ</div>", unsafe_allow_html=True)
 
-    # [KHÔI PHỤC] Nút chọn góc nhìn (View Mode)
     view_mode = st.radio("Chọn góc nhìn phân tích:", 
                          ["1. Tổng quan Luồng (Sankey)", "2. So sánh theo Công ty", "3. Chi tiết Phòng ban (Treemap)"], 
                          horizontal=True)
 
     if view_mode == "1. Tổng quan Luồng (Sankey)":
         if not df_filtered.empty:
-            st.info("Biểu đồ luồng hiển thị sự phân bổ từ: Vùng → Công ty → Phòng ban")
             sankey_data1 = df_filtered.groupby(['Location', 'Công ty']).size().reset_index(name='val')
             sankey_data1.columns = ['source', 'target', 'val']
             sankey_data2 = df_filtered.groupby(['Công ty', 'BU']).size().reset_index(name='val')
@@ -229,7 +227,6 @@ if uploaded_file:
             st.plotly_chart(fig_pie, use_container_width=True)
 
     elif view_mode == "3. Chi tiết Phòng ban (Treemap)":
-        # [KHÔI PHỤC] Biểu đồ Treemap xịn xò của bạn
         st.write("Bảng nhiệt thể hiện cường độ sử dụng xe theo từng Công ty & Phòng ban")
         if not df_filtered.empty:
             pivot = df_filtered.groupby(['Công ty', 'BU']).size().reset_index(name='Số chuyến')
@@ -238,23 +235,42 @@ if uploaded_file:
                                   title="Chi tiết từng Phòng ban (Diện tích = Số lượng)")
             st.plotly_chart(fig_tree, use_container_width=True)
 
-    # --- D. XU HƯỚNG & CHI TIẾT ---
+    # --- D. XU HƯỚNG & TOP LIST (ĐÃ KHÔI PHỤC ĐẦY ĐỦ Ở ĐÂY) ---
     st.markdown("---")
-    st.markdown("<div class='section-header'>📈 DỮ LIỆU CHI TIẾT</div>", unsafe_allow_html=True)
+    st.markdown("<div class='section-header'>📈 XU HƯỚNG & XẾP HẠNG</div>", unsafe_allow_html=True)
     
     t1, t2 = st.columns([2, 1])
+    
     with t1:
-        st.write("**Xu hướng theo tháng**")
-        df_trend = df_filtered.groupby('Tháng').size().reset_index(name='Số chuyến')
-        fig_trend = px.area(df_trend, x='Tháng', y='Số chuyến', markers=True)
-        st.plotly_chart(fig_trend, use_container_width=True)
+        st.subheader("Diễn biến theo tháng")
+        if 'Tháng' in df_filtered.columns:
+            df_trend = df_filtered.groupby('Tháng').size().reset_index(name='Số chuyến')
+            fig_trend = px.area(df_trend, x='Tháng', y='Số chuyến', markers=True, 
+                                color_discrete_sequence=['#0056b3'])
+            st.plotly_chart(fig_trend, use_container_width=True)
+        else:
+            st.info("Chưa có dữ liệu tháng.")
         
     with t2:
-        st.write("**Top 5 Tài xế chạy nhiều nhất**")
-        if 'Tên tài xế' in df_filtered.columns:
-            top_driver = df_filtered['Tên tài xế'].value_counts().head(5).reset_index()
-            top_driver.columns = ['Tài xế', 'Số chuyến']
-            st.dataframe(top_driver, use_container_width=True, hide_index=True)
+        st.subheader("Bảng Xếp Hạng")
+        # Dùng Tabs cho gọn, sếp thích cái này
+        tab_user, tab_driver = st.tabs(["🏆 Top Người Dùng", "🚖 Top Tài Xế"])
+        
+        with tab_user:
+            if 'Người sử dụng xe' in df_filtered.columns:
+                top_user = df_filtered['Người sử dụng xe'].value_counts().head(10).reset_index()
+                top_user.columns = ['Nhân viên', 'Số chuyến']
+                st.dataframe(top_user, use_container_width=True, hide_index=True)
+            else:
+                st.warning("Thiếu cột 'Người sử dụng xe'")
+
+        with tab_driver:
+            if 'Tên tài xế' in df_filtered.columns:
+                top_driver = df_filtered['Tên tài xế'].value_counts().head(10).reset_index()
+                top_driver.columns = ['Tài xế', 'Số chuyến']
+                st.dataframe(top_driver, use_container_width=True, hide_index=True)
+            else:
+                st.warning("Thiếu cột 'Tên tài xế'")
 
 else:
     st.info("👋 Hãy upload file Excel để bắt đầu phân tích.")
