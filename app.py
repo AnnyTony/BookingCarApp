@@ -6,7 +6,7 @@ from io import BytesIO
 from pptx import Presentation
 from pptx.util import Inches, Pt
 from pptx.dml.color import RGBColor
-import re # Thư viện xử lý chuỗi nâng cao
+import re
 
 # --- 1. CẤU HÌNH TRANG & CSS ---
 st.set_page_config(page_title="Hệ Thống Quản Trị & Tối Ưu Hóa Đội Xe", page_icon="🚘", layout="wide")
@@ -14,8 +14,6 @@ st.set_page_config(page_title="Hệ Thống Quản Trị & Tối Ưu Hóa Đội
 st.markdown("""
 <style>
     .block-container {padding-top: 1rem; padding-bottom: 3rem;}
-    
-    /* MODERN KPI CARD */
     .kpi-card {
         background-color: white; border-radius: 12px; padding: 20px;
         box-shadow: 0 4px 6px rgba(0,0,0,0.05);
@@ -30,24 +28,23 @@ st.markdown("""
     .kpi-icon { font-size: 20px; background: #f8f9fa; padding: 8px; border-radius: 8px; }
     .kpi-value { font-size: 32px; font-weight: 800; color: #212529; margin: 0; }
     .kpi-formula { font-size: 12px; color: #888; font-style: italic; margin-top: auto; padding-top: 10px; border-top: 1px dashed #eee; }
-    
-    /* Progress Bar */
     .progress-bg { background-color: #e9ecef; border-radius: 4px; height: 6px; width: 100%; margin: 8px 0; overflow: hidden; }
     .progress-fill { height: 100%; border-radius: 4px; transition: width 0.5s ease-in-out; }
 </style>
 """, unsafe_allow_html=True)
 
-# --- 2. HÀM XỬ LÝ DỮ LIỆU (CÓ LỌC BIỂN SỐ THÔNG MINH) ---
+# --- 2. HÀM XỬ LÝ DỮ LIỆU (LOGIC MỚI: UNION & NORMALIZE) ---
 @st.cache_data
 def load_data_final(file):
     try:
         xl = pd.ExcelFile(file, engine='openpyxl')
         
+        # Tìm sheet linh hoạt
         sheet_driver = next((s for s in xl.sheet_names if 'driver' in s.lower()), None)
         sheet_booking = next((s for s in xl.sheet_names if 'booking' in s.lower()), None)
         sheet_cbnv = next((s for s in xl.sheet_names if 'cbnv' in s.lower()), None)
         
-        if not sheet_booking: return "❌ Không tìm thấy sheet 'Booking car'.", []
+        if not sheet_booking: return "❌ Không tìm thấy sheet 'Booking car'.", [], pd.DataFrame()
 
         def smart_read(excel, sheet_name, keywords):
             df_preview = excel.parse(sheet_name, header=None, nrows=10)
@@ -64,41 +61,56 @@ def load_data_final(file):
 
         df_bk.columns = df_bk.columns.str.strip()
         df_final = df_bk
-        all_cars_list = [] 
+        
+        # --- HÀM CHUẨN HÓA & LỌC BIỂN SỐ ---
+        def normalize_plate(plate):
+            if not isinstance(plate, str): return ""
+            # Loại bỏ chấm, gạch ngang, khoảng trắng, chuyển về chữ hoa
+            clean = re.sub(r'[^A-Z0-9]', '', plate.upper())
+            return clean
 
-        # --- HÀM LỌC RÁC BIỂN SỐ XE ---
         def is_valid_plate(plate):
             s = str(plate).strip().upper()
-            # 1. Loại bỏ nếu quá dài (ngày tháng thường dài > 15 ký tự hoặc có giờ phút)
-            if len(s) > 12 or len(s) < 5: return False
-            # 2. Loại bỏ nếu chứa dấu hai chấm (dạng giờ 00:00:00) hoặc năm 202x
-            if ":" in s or "2024" in s or "2025" in s or "2026" in s: return False
-            # 3. Loại bỏ tiêu đề
-            if "BIỂN SỐ" in s: return False
-            # 4. Phải có số
-            if not any(char.isdigit() for char in s): return False
-            return True
-        # -------------------------------
-
+            if len(s) > 15 or len(s) < 5: return False
+            if ":" in s or "202" in s or "BIỂN SỐ" in s: return False # Loại bỏ ngày tháng/tiêu đề
+            return any(char.isdigit() for char in s) # Phải có số
+        
+        # 1. Lấy xe từ Driver Sheet
+        driver_cars = set()
         if not df_driver.empty:
             df_driver.columns = df_driver.columns.str.strip()
             if 'Biển số xe' in df_driver.columns:
-                # Lấy danh sách thô
-                raw_list = df_driver['Biển số xe'].dropna().unique().tolist()
-                # Áp dụng bộ lọc làm sạch
-                all_cars_list = [x for x in raw_list if is_valid_plate(x)]
+                raw_driver = df_driver['Biển số xe'].dropna().unique()
+                driver_cars = {normalize_plate(p) for p in raw_driver if is_valid_plate(p)}
                 
-                df_driver = df_driver.drop_duplicates(subset=['Biển số xe'], keep='last')
-                df_final = df_final.merge(df_driver[['Biển số xe', 'Tên tài xế']], on='Biển số xe', how='left', suffixes=('', '_D'))
+                # Merge thông tin tài xế
+                df_driver['Biển_Clean'] = df_driver['Biển số xe'].apply(normalize_plate)
+                df_driver = df_driver.drop_duplicates(subset=['Biển_Clean'], keep='last')
+                
+                # Tạo cột Clean cho bảng chính để merge
+                df_final['Biển_Clean'] = df_final['Biển số xe'].apply(normalize_plate)
+                df_final = df_final.merge(df_driver[['Biển_Clean', 'Tên tài xế']], on='Biển_Clean', how='left', suffixes=('', '_D'))
+                
                 if 'Tên tài xế_D' in df_final.columns:
-                    if 'Tên tài xế' not in df_final.columns: df_final['Tên tài xế'] = df_final['Tên tài xế_D']
-                    else: df_final['Tên tài xế'] = df_final['Tên tài xế'].fillna(df_final['Tên tài xế_D'])
+                    df_final['Tên tài xế'] = df_final['Tên tài xế'].fillna(df_final['Tên tài xế_D'])
 
-        # Fallback: Lấy từ lịch sử nếu list xe rỗng
-        if not all_cars_list and 'Biển số xe' in df_final.columns:
-             raw_list_bk = df_final['Biển số xe'].dropna().unique().tolist()
-             all_cars_list = [x for x in raw_list_bk if is_valid_plate(x)]
+        # 2. Lấy xe từ Booking History
+        booking_cars = set()
+        if 'Biển số xe' in df_final.columns:
+            raw_booking = df_final['Biển số xe'].dropna().unique()
+            booking_cars = {normalize_plate(p) for p in raw_booking if is_valid_plate(p)}
 
+        # 3. Tổng hợp (Union) -> Danh sách xe duy nhất chuẩn hóa
+        all_unique_cars = sorted(list(driver_cars.union(booking_cars)))
+        
+        # Tạo DataFrame chi tiết xe để đối soát (Quan trọng cho Tab 4)
+        df_cars_check = pd.DataFrame({'Biển Số Chuẩn': all_unique_cars})
+        df_cars_check['Nguồn'] = df_cars_check['Biển Số Chuẩn'].apply(
+            lambda x: 'Cả hai' if (x in driver_cars and x in booking_cars) 
+            else ('Chỉ có trong Driver' if x in driver_cars else 'Vãng lai (Chỉ có trong Booking)')
+        )
+
+        # Xử lý các cột khác
         if not df_cbnv.empty:
             df_cbnv.columns = df_cbnv.columns.str.strip()
             col_map = {}
@@ -117,16 +129,15 @@ def load_data_final(file):
             if c not in df_final.columns: df_final[c] = 'Unknown'
             else: df_final[c] = df_final[c].fillna('Unknown').astype(str)
         
-        if 'Tên tài xế' not in df_final.columns: df_final['Tên tài xế'] = 'Chưa cập nhật'
         df_final['Tên tài xế'] = df_final['Tên tài xế'].fillna('Chưa cập nhật')
 
         df_final['Start'] = pd.to_datetime(df_final['Ngày khởi hành'].astype(str) + ' ' + df_final['Giờ khởi hành'].astype(str), errors='coerce')
         df_final['End'] = pd.to_datetime(df_final['Ngày khởi hành'].astype(str) + ' ' + df_final['Giờ kết thúc'].astype(str), errors='coerce')
         df_final.loc[df_final['End'] < df_final['Start'], 'End'] += pd.Timedelta(days=1)
-        
         df_final['Duration'] = (df_final['End'] - df_final['Start']).dt.total_seconds() / 3600
         df_final['Tháng'] = df_final['Start'].dt.strftime('%Y-%m')
         
+        # Logic Đi Tỉnh
         def check_scope_v2(r):
             s = str(r).lower()
             provinces = ['bình dương', 'đồng nai', 'long an', 'bà rịa', 'vũng tàu', 'tây ninh', 'bình phước', 'tiền giang', 'bến tre', 'cần thơ', 'vĩnh long', 'an giang', 'bắc ninh', 'hưng yên', 'hải dương', 'hải phòng', 'vĩnh phúc', 'hà nam', 'nam định', 'thái bình', 'thái nguyên', 'hòa bình', 'bắc giang', 'phú thọ', 'thanh hóa', 'nghệ an']
@@ -134,9 +145,13 @@ def load_data_final(file):
             return "Nội thành"
 
         df_final['Phạm Vi'] = df_final['Lộ trình'].apply(check_scope_v2) if 'Lộ trình' in df_final.columns else 'Unknown'
+        
+        # Thêm cột Biển_Clean vào df_final để filter sau này
+        if 'Biển_Clean' not in df_final.columns:
+             df_final['Biển_Clean'] = df_final['Biển số xe'].apply(normalize_plate)
 
-        return df_final, all_cars_list 
-    except Exception as e: return f"Lỗi: {str(e)}", []
+        return df_final, all_unique_cars, df_cars_check
+    except Exception as e: return f"Lỗi: {str(e)}", [], pd.DataFrame()
 
 # --- 3. HÀM TẠO ẢNH CHO PPTX ---
 def get_chart_img(data, x, y, kind='bar', title='', color='#0078d4'):
@@ -219,7 +234,8 @@ st.title("📊 Phước Minh - Hệ Thống Quản Trị & Tối Ưu Hóa Đội
 uploaded_file = st.file_uploader("Upload Excel", type=['xlsx'], label_visibility="collapsed")
 
 if uploaded_file:
-    df, all_cars_list = load_data_final(uploaded_file)
+    # Load data
+    df, all_unique_cars, df_cars_check = load_data_final(uploaded_file)
     if isinstance(df, str): st.error(df); st.stop()
     
     with st.sidebar:
@@ -247,21 +263,16 @@ if uploaded_file:
     if df_filtered.empty: st.warning("Không có dữ liệu."); st.stop()
 
     # --- KPI CALCULATION ---
-    # Logic xác định danh sách xe để tính toán
+    # Tự động tính số xe dựa trên bộ lọc
     if sel_loc == "Tất cả" and sel_comp == "Tất cả" and sel_bu == "Tất cả":
-        cars_to_count = all_cars_list # Danh sách gốc từ Driver sheet (Đã lọc sạch)
+        total_cars_kpi = len(all_unique_cars) # Lấy tổng xe đã chuẩn hóa
+        cars_display = all_unique_cars
     else:
-        # Nếu lọc, chỉ lấy danh sách xe xuất hiện trong filter, và cũng phải làm sạch
-        def is_valid_plate(plate):
-            s = str(plate).strip().upper()
-            if len(s) > 12 or len(s) < 5 or ":" in s or "202" in s or "BIỂN SỐ" in s: return False
-            return any(char.isdigit() for char in s)
-            
-        raw_filtered_cars = df_filtered['Biển số xe'].dropna().unique().tolist()
-        cars_to_count = [x for x in raw_filtered_cars if is_valid_plate(x)]
-    
-    total_cars_kpi = len(cars_to_count)
-    if total_cars_kpi == 0: total_cars_kpi = 1
+        # Lấy danh sách xe trong vùng filter hiện tại
+        active_raw = df_filtered['Biển_Clean'].dropna().unique().tolist()
+        cars_display = sorted(active_raw)
+        total_cars_kpi = len(cars_display)
+        if total_cars_kpi == 0: total_cars_kpi = 1
 
     days = max((df_filtered['Start'].max() - df_filtered['Start'].min()).days + 1, 1)
     total_trips = len(df_filtered)
@@ -380,10 +391,16 @@ if uploaded_file:
             st.write("#### 1. Các tham số tính Công Suất")
             st.write(f"- **Tổng số xe ($N$):** {total_cars_kpi} xe")
             
-            # --- [MỚI] CHECK DANH SÁCH XE ---
-            with st.expander(f"🚗 Xem danh sách {total_cars_kpi} xe được tính toán (Click để mở)"):
-                st.table(pd.DataFrame(cars_to_count, columns=["Danh Sách Biển Số Xe"]))
-            # --------------------------------
+            # --- SHOW LIST XE ---
+            with st.expander(f"🚗 Xem danh sách {len(cars_display)} xe đã chuẩn hóa (Click để mở)"):
+                st.write("Danh sách biển số xe sau khi loại bỏ trùng lặp và làm sạch:")
+                df_disp = pd.DataFrame(cars_display, columns=["Biển Số"])
+                # Nếu đang ở chế độ 'Tất cả' (không filter), hiển thị thêm cột Nguồn gốc
+                if not df_cars_check.empty and len(cars_display) == len(all_unique_cars):
+                     st.dataframe(df_cars_check, use_container_width=True)
+                else:
+                     st.dataframe(df_disp, use_container_width=True)
+            # --------------------
 
             st.write(f"- **Số ngày trong kỳ lọc ($D$):** {days} ngày (từ {df_filtered['Start'].min().date()} đến {df_filtered['Start'].max().date()})")
             st.write(f"- **Giờ tiêu chuẩn/ngày:** 8 giờ")
