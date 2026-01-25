@@ -1,7 +1,6 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-import plotly.graph_objects as go
 import matplotlib.pyplot as plt
 from io import BytesIO
 from pptx import Presentation
@@ -19,31 +18,35 @@ st.markdown("""
     .kpi-card {
         background-color: white; border-radius: 12px; padding: 20px;
         box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+        transition: transform 0.2s, box-shadow 0.2s;
         border: 1px solid #f0f2f6;
         height: 100%; display: flex; flex-direction: column; justify-content: space-between;
         min-height: 160px;
     }
-    .kpi-title {font-size: 14px; color: #6c757d; font-weight: 700; text-transform: uppercase;}
-    .kpi-icon {font-size: 20px; background: #f8f9fa; padding: 8px; border-radius: 8px;}
-    .kpi-value {font-size: 32px; font-weight: 800; color: #212529; margin: 0;}
-    .kpi-formula {font-size: 12px; color: #888; font-style: italic; margin-top: 10px; border-top: 1px dashed #eee; padding-top: 5px;}
+    .kpi-card:hover { transform: translateY(-5px); box-shadow: 0 10px 15px rgba(0,0,0,0.1); }
+    .kpi-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+    .kpi-title { font-size: 14px; color: #6c757d; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; }
+    .kpi-icon { font-size: 20px; background: #f8f9fa; padding: 8px; border-radius: 8px; }
+    .kpi-value { font-size: 32px; font-weight: 800; color: #212529; margin: 0; }
+    .kpi-formula { font-size: 12px; color: #888; font-style: italic; margin-top: auto; padding-top: 10px; border-top: 1px dashed #eee; }
     
     /* Progress Bar */
-    .progress-bg {background-color: #e9ecef; border-radius: 4px; height: 6px; width: 100%; margin: 8px 0; overflow: hidden;}
-    .progress-fill {height: 100%; border-radius: 4px; transition: width 0.5s ease-in-out;}
+    .progress-bg { background-color: #e9ecef; border-radius: 4px; height: 6px; width: 100%; margin: 8px 0; overflow: hidden; }
+    .progress-fill { height: 100%; border-radius: 4px; transition: width 0.5s ease-in-out; }
 </style>
 """, unsafe_allow_html=True)
 
-# --- 2. HÀM XỬ LÝ DỮ LIỆU ---
+# --- 2. HÀM XỬ LÝ DỮ LIỆU (CẬP NHẬT TRẢ VỀ LIST XE) ---
 @st.cache_data
 def load_data_final(file):
     try:
         xl = pd.ExcelFile(file, engine='openpyxl')
+        
         sheet_driver = next((s for s in xl.sheet_names if 'driver' in s.lower()), None)
         sheet_booking = next((s for s in xl.sheet_names if 'booking' in s.lower()), None)
         sheet_cbnv = next((s for s in xl.sheet_names if 'cbnv' in s.lower()), None)
         
-        if not sheet_booking: return "❌ Không tìm thấy sheet 'Booking car'."
+        if not sheet_booking: return "❌ Không tìm thấy sheet 'Booking car'.", []
 
         def smart_read(excel, sheet_name, keywords):
             df_preview = excel.parse(sheet_name, header=None, nrows=10)
@@ -54,31 +57,30 @@ def load_data_final(file):
                     header_idx = idx; break
             return excel.parse(sheet_name, header=header_idx)
 
-        # Load Data
         df_bk = smart_read(xl, sheet_booking, ['ngày khởi hành'])
         df_driver = smart_read(xl, sheet_driver, ['biển số xe']) if sheet_driver else pd.DataFrame()
         df_cbnv = smart_read(xl, sheet_cbnv, ['full name']) if sheet_cbnv else pd.DataFrame()
 
         df_bk.columns = df_bk.columns.str.strip()
-        
-        # Merge Driver & Count Cars
         df_final = df_bk
-        total_unique_cars = 0
-        
+        all_cars_list = [] # Danh sách xe tổng (Toàn bộ)
+
         if not df_driver.empty:
             df_driver.columns = df_driver.columns.str.strip()
             if 'Biển số xe' in df_driver.columns:
-                total_unique_cars = df_driver['Biển số xe'].dropna().nunique() # Đếm xe thực
+                # Lấy danh sách xe gốc từ sheet Driver
+                all_cars_list = df_driver['Biển số xe'].dropna().unique().tolist()
+                
                 df_driver = df_driver.drop_duplicates(subset=['Biển số xe'], keep='last')
                 df_final = df_final.merge(df_driver[['Biển số xe', 'Tên tài xế']], on='Biển số xe', how='left', suffixes=('', '_D'))
                 if 'Tên tài xế_D' in df_final.columns:
                     if 'Tên tài xế' not in df_final.columns: df_final['Tên tài xế'] = df_final['Tên tài xế_D']
                     else: df_final['Tên tài xế'] = df_final['Tên tài xế'].fillna(df_final['Tên tài xế_D'])
 
-        if total_unique_cars == 0 and 'Biển số xe' in df_final.columns:
-             total_unique_cars = df_final['Biển số xe'].dropna().nunique()
+        # Fallback: Nếu không có list xe từ driver, lấy từ booking
+        if not all_cars_list and 'Biển số xe' in df_final.columns:
+             all_cars_list = df_final['Biển số xe'].dropna().unique().tolist()
 
-        # Merge CBNV
         if not df_cbnv.empty:
             df_cbnv.columns = df_cbnv.columns.str.strip()
             col_map = {}
@@ -103,10 +105,10 @@ def load_data_final(file):
         df_final['Start'] = pd.to_datetime(df_final['Ngày khởi hành'].astype(str) + ' ' + df_final['Giờ khởi hành'].astype(str), errors='coerce')
         df_final['End'] = pd.to_datetime(df_final['Ngày khởi hành'].astype(str) + ' ' + df_final['Giờ kết thúc'].astype(str), errors='coerce')
         df_final.loc[df_final['End'] < df_final['Start'], 'End'] += pd.Timedelta(days=1)
+        
         df_final['Duration'] = (df_final['End'] - df_final['Start']).dt.total_seconds() / 3600
         df_final['Tháng'] = df_final['Start'].dt.strftime('%Y-%m')
         
-        # --- LOGIC PHÂN BIỆT ĐI TỈNH (CẬP NHẬT) ---
         def check_scope_v2(r):
             s = str(r).lower()
             provinces = ['bình dương', 'đồng nai', 'long an', 'bà rịa', 'vũng tàu', 'tây ninh', 'bình phước', 'tiền giang', 'bến tre', 'cần thơ', 'vĩnh long', 'an giang', 'bắc ninh', 'hưng yên', 'hải dương', 'hải phòng', 'vĩnh phúc', 'hà nam', 'nam định', 'thái bình', 'thái nguyên', 'hòa bình', 'bắc giang', 'phú thọ', 'thanh hóa', 'nghệ an']
@@ -115,8 +117,8 @@ def load_data_final(file):
 
         df_final['Phạm Vi'] = df_final['Lộ trình'].apply(check_scope_v2) if 'Lộ trình' in df_final.columns else 'Unknown'
 
-        return df_final, total_unique_cars
-    except Exception as e: return f"Lỗi: {str(e)}", 0
+        return df_final, all_cars_list # Trả về DF và List xe
+    except Exception as e: return f"Lỗi: {str(e)}", []
 
 # --- 3. HÀM TẠO ẢNH CHO PPTX ---
 def get_chart_img(data, x, y, kind='bar', title='', color='#0078d4'):
@@ -199,7 +201,7 @@ st.title("📊 Phước Minh - Hệ Thống Quản Trị & Tối Ưu Hóa Đội
 uploaded_file = st.file_uploader("Upload Excel", type=['xlsx'], label_visibility="collapsed")
 
 if uploaded_file:
-    df, real_car_count = load_data_final(uploaded_file)
+    df, all_cars_list = load_data_final(uploaded_file)
     if isinstance(df, str): st.error(df); st.stop()
     
     with st.sidebar:
@@ -227,18 +229,19 @@ if uploaded_file:
     if df_filtered.empty: st.warning("Không có dữ liệu."); st.stop()
 
     # --- KPI CALCULATION ---
-    # Tự động tính số xe: Nếu lọc, lấy số xe xuất hiện. Nếu không lọc, lấy tổng xe.
+    # Logic xác định danh sách xe để tính toán
     if sel_loc == "Tất cả" and sel_comp == "Tất cả" and sel_bu == "Tất cả":
-        total_cars_kpi = real_car_count if real_car_count > 0 else 30
+        cars_to_count = all_cars_list # Danh sách gốc từ Driver sheet
     else:
-        total_cars_kpi = df_filtered['Biển số xe'].nunique()
-        if total_cars_kpi == 0: total_cars_kpi = 1 # Tránh chia cho 0
+        cars_to_count = df_filtered['Biển số xe'].dropna().unique().tolist() # Danh sách xe thực tế chạy trong filter
+    
+    total_cars_kpi = len(cars_to_count)
+    if total_cars_kpi == 0: total_cars_kpi = 1
 
     days = max((df_filtered['Start'].max() - df_filtered['Start'].min()).days + 1, 1)
     total_trips = len(df_filtered)
     total_hours = df_filtered['Duration'].sum()
     
-    # CÔNG THỨC 8h/ngày như yêu cầu
     occupancy_cap = total_cars_kpi * days * 8
     occupancy = (total_hours / occupancy_cap * 100) if occupancy_cap > 0 else 0
     
@@ -264,7 +267,6 @@ if uploaded_file:
         col.markdown(html_code, unsafe_allow_html=True)
 
     # --- TABS ---
-    # THÊM TAB 4 ĐỂ ĐỐI SOÁT
     t1, t2, t3, t4 = st.tabs(["📊 Phân Tích Đơn Vị", "🏆 Bảng Xếp Hạng", "📉 Chất Lượng", "⚙️ Chi Tiết & Đối Soát"])
     
     chart_prefs = {}
@@ -294,7 +296,6 @@ if uploaded_file:
                 else: fig_s = px.pie(df_sc, values='Số lượng', names='Phạm vi', hole=0.5, title="Phạm Vi Di Chuyển")
                 st.plotly_chart(fig_s, use_container_width=True)
                 
-                # --- THÊM: CHECK BẢNG PHẠM VI (YÊU CẦU 1) ---
                 with st.expander("🔍 Kiểm tra chi tiết Phạm Vi (Xem tại đây)"):
                     st.write("Dữ liệu Lộ trình & Phân loại:")
                     st.dataframe(df_filtered[['Ngày khởi hành', 'Lộ trình', 'Phạm Vi']], use_container_width=True)
@@ -345,16 +346,21 @@ if uploaded_file:
                 st.dataframe(bad_trips[actual], use_container_width=True)
             else: st.success("Không có chuyến nào bị hủy.")
 
-    # --- TAB 4: ĐỐI SOÁT & KIỂM TRA (TÍNH NĂNG MỚI) ---
     with t4:
         st.subheader("⚙️ Đối Soát Công Thức & Dữ Liệu")
         st.info("Tab này dùng để kiểm tra tính chính xác của các chỉ số KPI.")
-        
         c_kpi_check, c_chart_check = st.columns(2)
         
         with c_kpi_check:
             st.write("#### 1. Các tham số tính Công Suất")
             st.write(f"- **Tổng số xe ($N$):** {total_cars_kpi} xe")
+            
+            # --- [MỚI] NÚT XEM DANH SÁCH XE ---
+            with st.expander(f"🚗 Xem danh sách {total_cars_kpi} xe được tính toán"):
+                st.write("Đây là danh sách biển số xe được hệ thống ghi nhận:")
+                st.table(pd.DataFrame(cars_to_count, columns=["Biển số xe"]))
+            # -----------------------------------
+
             st.write(f"- **Số ngày trong kỳ lọc ($D$):** {days} ngày (từ {df_filtered['Start'].min().date()} đến {df_filtered['Start'].max().date()})")
             st.write(f"- **Giờ tiêu chuẩn/ngày:** 8 giờ")
             st.markdown("---")
@@ -364,12 +370,8 @@ if uploaded_file:
             
         with c_chart_check:
             st.write("#### 2. Biểu đồ So Sánh Năng Lực")
-            df_check = pd.DataFrame({
-                'Loại': ['Năng Lực Tối Đa (Capacity)', 'Thực Tế Sử Dụng (Actual)'],
-                'Giờ': [occupancy_cap, total_hours]
-            })
-            fig_check = px.bar(df_check, x='Loại', y='Giờ', text='Giờ', color='Loại', 
-                               color_discrete_map={'Năng Lực Tối Đa (Capacity)': '#e9ecef', 'Thực Tế Sử Dụng (Actual)': '#0078d4'})
+            df_check = pd.DataFrame({'Loại': ['Năng Lực Tối Đa', 'Thực Tế Sử Dụng'], 'Giờ': [occupancy_cap, total_hours]})
+            fig_check = px.bar(df_check, x='Loại', y='Giờ', text='Giờ', color='Loại', color_discrete_map={'Năng Lực Tối Đa': '#e9ecef', 'Thực Tế Sử Dụng': '#0078d4'})
             st.plotly_chart(fig_check, use_container_width=True)
 
     st.divider()
