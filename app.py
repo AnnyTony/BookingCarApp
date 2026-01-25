@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
 import matplotlib.pyplot as plt
 from io import BytesIO
 from pptx import Presentation
@@ -16,87 +17,28 @@ st.markdown("""
     
     /* MODERN KPI CARD */
     .kpi-card {
-        background-color: white;
-        border-radius: 12px;
-        padding: 20px;
+        background-color: white; border-radius: 12px; padding: 20px;
         box-shadow: 0 4px 6px rgba(0,0,0,0.05);
-        transition: transform 0.2s, box-shadow 0.2s;
         border: 1px solid #f0f2f6;
-        height: 100%;
-        display: flex;
-        flex-direction: column;
-        justify-content: space-between;
+        height: 100%; display: flex; flex-direction: column; justify-content: space-between;
         min-height: 160px;
     }
+    .kpi-title {font-size: 14px; color: #6c757d; font-weight: 700; text-transform: uppercase;}
+    .kpi-icon {font-size: 20px; background: #f8f9fa; padding: 8px; border-radius: 8px;}
+    .kpi-value {font-size: 32px; font-weight: 800; color: #212529; margin: 0;}
+    .kpi-formula {font-size: 12px; color: #888; font-style: italic; margin-top: 10px; border-top: 1px dashed #eee; padding-top: 5px;}
     
-    .kpi-card:hover {
-        transform: translateY(-5px);
-        box-shadow: 0 10px 15px rgba(0,0,0,0.1);
-    }
-
-    .kpi-header {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        margin-bottom: 10px;
-    }
-
-    .kpi-title {
-        font-size: 14px;
-        color: #6c757d;
-        font-weight: 700;
-        text-transform: uppercase;
-        letter-spacing: 0.5px;
-    }
-
-    .kpi-icon {
-        font-size: 20px;
-        background: #f8f9fa;
-        padding: 8px;
-        border-radius: 8px;
-    }
-
-    .kpi-value {
-        font-size: 32px;
-        font-weight: 800;
-        color: #212529;
-        margin: 0;
-    }
-
-    .kpi-formula {
-        font-size: 12px;
-        color: #888;
-        font-style: italic;
-        margin-top: auto; 
-        padding-top: 10px;
-        border-top: 1px dashed #eee;
-    }
-
-    /* Progress Bar Style */
-    .progress-bg {
-        background-color: #e9ecef;
-        border-radius: 4px;
-        height: 6px;
-        width: 100%;
-        margin-top: 8px;
-        margin-bottom: 10px;
-        overflow: hidden;
-    }
-    
-    .progress-fill {
-        height: 100%;
-        border-radius: 4px;
-        transition: width 0.5s ease-in-out;
-    }
+    /* Progress Bar */
+    .progress-bg {background-color: #e9ecef; border-radius: 4px; height: 6px; width: 100%; margin: 8px 0; overflow: hidden;}
+    .progress-fill {height: 100%; border-radius: 4px; transition: width 0.5s ease-in-out;}
 </style>
 """, unsafe_allow_html=True)
 
-# --- 2. HÀM XỬ LÝ DỮ LIỆU (ĐÃ SỬA LOGIC) ---
+# --- 2. HÀM XỬ LÝ DỮ LIỆU ---
 @st.cache_data
 def load_data_final(file):
     try:
         xl = pd.ExcelFile(file, engine='openpyxl')
-        
         sheet_driver = next((s for s in xl.sheet_names if 'driver' in s.lower()), None)
         sheet_booking = next((s for s in xl.sheet_names if 'booking' in s.lower()), None)
         sheet_cbnv = next((s for s in xl.sheet_names if 'cbnv' in s.lower()), None)
@@ -119,25 +61,20 @@ def load_data_final(file):
 
         df_bk.columns = df_bk.columns.str.strip()
         
-        # Merge Driver & Clean
+        # Merge Driver & Count Cars
         df_final = df_bk
-        total_unique_cars = 0 # Biến đếm số xe
+        total_unique_cars = 0
         
         if not df_driver.empty:
             df_driver.columns = df_driver.columns.str.strip()
             if 'Biển số xe' in df_driver.columns:
-                # Đếm số xe thực tế từ danh sách Driver
-                total_unique_cars = df_driver['Biển số xe'].dropna().nunique()
-                
+                total_unique_cars = df_driver['Biển số xe'].dropna().nunique() # Đếm xe thực
                 df_driver = df_driver.drop_duplicates(subset=['Biển số xe'], keep='last')
                 df_final = df_final.merge(df_driver[['Biển số xe', 'Tên tài xế']], on='Biển số xe', how='left', suffixes=('', '_D'))
                 if 'Tên tài xế_D' in df_final.columns:
-                    if 'Tên tài xế' not in df_final.columns:
-                        df_final['Tên tài xế'] = df_final['Tên tài xế_D']
-                    else:
-                        df_final['Tên tài xế'] = df_final['Tên tài xế'].fillna(df_final['Tên tài xế_D'])
+                    if 'Tên tài xế' not in df_final.columns: df_final['Tên tài xế'] = df_final['Tên tài xế_D']
+                    else: df_final['Tên tài xế'] = df_final['Tên tài xế'].fillna(df_final['Tên tài xế_D'])
 
-        # Nếu không có sheet Driver hoặc không đếm được, đếm từ lịch sử chuyến
         if total_unique_cars == 0 and 'Biển số xe' in df_final.columns:
              total_unique_cars = df_final['Biển số xe'].dropna().nunique()
 
@@ -150,15 +87,12 @@ def load_data_final(file):
                 if 'công ty' in str(c).lower(): col_map[c] = 'Công ty'
                 if 'bu' in str(c).lower(): col_map[c] = 'BU'
                 if 'location' in str(c).lower(): col_map[c] = 'Location'
-            
             available_cols = [c for c in col_map.keys() if c in df_cbnv.columns]
             df_cbnv = df_cbnv[available_cols].rename(columns=col_map)
-            
             if 'Full Name' in df_cbnv.columns:
                 df_cbnv = df_cbnv.drop_duplicates(subset=['Full Name'], keep='first')
                 df_final = df_final.merge(df_cbnv, left_on='Người sử dụng xe', right_on='Full Name', how='left')
 
-        # Fillna
         for c in ['Công ty', 'BU', 'Location']:
             if c not in df_final.columns: df_final[c] = 'Unknown'
             else: df_final[c] = df_final[c].fillna('Unknown').astype(str)
@@ -166,64 +100,39 @@ def load_data_final(file):
         if 'Tên tài xế' not in df_final.columns: df_final['Tên tài xế'] = 'Chưa cập nhật'
         df_final['Tên tài xế'] = df_final['Tên tài xế'].fillna('Chưa cập nhật')
 
-        # Xử lý thời gian
         df_final['Start'] = pd.to_datetime(df_final['Ngày khởi hành'].astype(str) + ' ' + df_final['Giờ khởi hành'].astype(str), errors='coerce')
         df_final['End'] = pd.to_datetime(df_final['Ngày khởi hành'].astype(str) + ' ' + df_final['Giờ kết thúc'].astype(str), errors='coerce')
         df_final.loc[df_final['End'] < df_final['Start'], 'End'] += pd.Timedelta(days=1)
-        
         df_final['Duration'] = (df_final['End'] - df_final['Start']).dt.total_seconds() / 3600
         df_final['Tháng'] = df_final['Start'].dt.strftime('%Y-%m')
         
-        # --- LOGIC PHÂN BIỆT ĐI TỈNH MỚI (CHÍNH XÁC HƠN) ---
+        # --- LOGIC PHÂN BIỆT ĐI TỈNH (CẬP NHẬT) ---
         def check_scope_v2(r):
             s = str(r).lower()
-            # Danh sách các từ khóa chắc chắn là đi tỉnh (lân cận HCM/HN)
-            provinces = [
-                'bình dương', 'đồng nai', 'long an', 'bà rịa', 'vũng tàu', 'tây ninh', 
-                'bình phước', 'tiền giang', 'bến tre', 'cần thơ', 'vĩnh long', 'an giang',
-                'bắc ninh', 'hưng yên', 'hải dương', 'hải phòng', 'vĩnh phúc', 'hà nam', 
-                'nam định', 'thái bình', 'thái nguyên', 'hòa bình', 'bắc giang', 'phú thọ',
-                'thanh hóa', 'nghệ an'
-            ]
-            
-            # Nếu lộ trình chứa tên tỉnh -> Đi Tỉnh
-            if any(p in s for p in provinces):
-                return "Đi Tỉnh"
-            
-            # Mặc định còn lại là Nội thành (HCM/HN)
+            provinces = ['bình dương', 'đồng nai', 'long an', 'bà rịa', 'vũng tàu', 'tây ninh', 'bình phước', 'tiền giang', 'bến tre', 'cần thơ', 'vĩnh long', 'an giang', 'bắc ninh', 'hưng yên', 'hải dương', 'hải phòng', 'vĩnh phúc', 'hà nam', 'nam định', 'thái bình', 'thái nguyên', 'hòa bình', 'bắc giang', 'phú thọ', 'thanh hóa', 'nghệ an']
+            if any(p in s for p in provinces): return "Đi Tỉnh"
             return "Nội thành"
 
-        if 'Lộ trình' in df_final.columns:
-            df_final['Phạm Vi'] = df_final['Lộ trình'].apply(check_scope_v2)
-        else:
-            df_final['Phạm Vi'] = 'Unknown'
+        df_final['Phạm Vi'] = df_final['Lộ trình'].apply(check_scope_v2) if 'Lộ trình' in df_final.columns else 'Unknown'
 
-        return df_final, total_unique_cars # Trả về thêm số lượng xe
+        return df_final, total_unique_cars
     except Exception as e: return f"Lỗi: {str(e)}", 0
 
 # --- 3. HÀM TẠO ẢNH CHO PPTX ---
 def get_chart_img(data, x, y, kind='bar', title='', color='#0078d4'):
     plt.figure(figsize=(7, 4.5))
     if x not in data.columns or y not in data.columns:
-        plt.text(0.5, 0.5, 'No Data', ha='center')
-        img = BytesIO(); plt.savefig(img, format='png'); plt.close(); img.seek(0)
-        return img
+        plt.text(0.5, 0.5, 'No Data', ha='center'); img = BytesIO(); plt.savefig(img, format='png'); plt.close(); img.seek(0); return img
 
     if kind == 'bar': 
         data = data.sort_values(by=x, ascending=True)
-        bars = plt.barh(data[y], data[x], color=color)
-        plt.xlabel(x)
-        plt.bar_label(bars, fmt='%g')
+        bars = plt.barh(data[y], data[x], color=color); plt.xlabel(x); plt.bar_label(bars, fmt='%g')
     elif kind == 'column': 
-        bars = plt.bar(data[y], data[x], color=color)
-        plt.ylabel(x)
-        plt.xticks(rotation=45, ha='right')
-        plt.bar_label(bars, fmt='%g')
+        bars = plt.bar(data[y], data[x], color=color); plt.ylabel(x); plt.xticks(rotation=45, ha='right'); plt.bar_label(bars, fmt='%g')
     elif kind == 'pie': 
         plt.pie(data[x], labels=data[y], autopct='%1.1f%%', startangle=90, colors=['#107c10', '#d13438', '#0078d4', '#ffc107', '#8764b8'])
     
-    plt.title(title, pad=15, fontweight='bold', fontsize=12, color='#333')
-    plt.tight_layout()
+    plt.title(title, pad=15, fontweight='bold', fontsize=12, color='#333'); plt.tight_layout()
     img = BytesIO(); plt.savefig(img, format='png', dpi=120); plt.close(); img.seek(0)
     return img
 
@@ -233,36 +142,22 @@ def export_pptx(kpi, df_comp, df_status, top_users, top_drivers, df_bad_trips, s
     
     def add_kpi_shape(slide, left, top, width, height, title, value, sub, color_rgb):
         shape = slide.shapes.add_shape(1, left, top, width, height)
-        shape.fill.solid()
-        shape.fill.fore_color.rgb = RGBColor(255, 255, 255)
-        shape.line.color.rgb = color_rgb
-        shape.line.width = Pt(2.5)
+        shape.fill.solid(); shape.fill.fore_color.rgb = RGBColor(255, 255, 255)
+        shape.line.color.rgb = color_rgb; shape.line.width = Pt(2.5)
         
         tb = slide.shapes.add_textbox(left + Inches(0.1), top + Inches(0.1), width - Inches(0.2), Inches(0.3))
-        tb.text_frame.text = title
-        tb.text_frame.paragraphs[0].font.bold = True
-        tb.text_frame.paragraphs[0].font.color.rgb = RGBColor(100, 100, 100)
+        tb.text_frame.text = title; tb.text_frame.paragraphs[0].font.bold = True; tb.text_frame.paragraphs[0].font.color.rgb = RGBColor(100, 100, 100)
         
         tb_v = slide.shapes.add_textbox(left + Inches(0.1), top + Inches(0.4), width - Inches(0.2), Inches(0.5))
-        p_v = tb_v.text_frame.paragraphs[0]
-        p_v.text = str(value)
-        p_v.font.size = Pt(24)
-        p_v.font.bold = True
+        p_v = tb_v.text_frame.paragraphs[0]; p_v.text = str(value); p_v.font.size = Pt(24); p_v.font.bold = True
         
         tb_s = slide.shapes.add_textbox(left + Inches(0.1), top + height - Inches(0.4), width - Inches(0.2), Inches(0.3))
-        p_s = tb_s.text_frame.paragraphs[0]
-        p_s.text = sub
-        p_s.font.size = Pt(9)
-        p_s.font.italic = True
-        p_s.font.color.rgb = RGBColor(150, 150, 150)
+        p_s = tb_s.text_frame.paragraphs[0]; p_s.text = sub; p_s.font.size = Pt(9); p_s.font.italic = True; p_s.font.color.rgb = RGBColor(150, 150, 150)
 
     slide = prs.slides.add_slide(prs.slide_layouts[0])
-    slide.shapes.title.text = "BÁO CÁO VẬN HÀNH ĐỘI XE"
-    slide.placeholders[1].text = f"Cập nhật đến tháng: {kpi['last_month']}"
+    slide.shapes.title.text = "BÁO CÁO VẬN HÀNH ĐỘI XE"; slide.placeholders[1].text = f"Cập nhật đến tháng: {kpi['last_month']}"
 
-    slide = prs.slides.add_slide(prs.slide_layouts[5])
-    slide.shapes.title.text = "TỔNG QUAN HIỆU SUẤT"
-    
+    slide = prs.slides.add_slide(prs.slide_layouts[5]); slide.shapes.title.text = "TỔNG QUAN HIỆU SUẤT"
     add_kpi_shape(slide, Inches(0.5), Inches(2.5), Inches(1.8), Inches(1.5), "TỔNG CHUYẾN", f"{kpi['trips']}", "Số chuyến", RGBColor(0, 120, 212))
     add_kpi_shape(slide, Inches(2.4), Inches(2.5), Inches(1.8), Inches(1.5), "GIỜ VẬN HÀNH", f"{kpi['hours']:,.0f}", "Tổng giờ", RGBColor(0, 120, 212))
     add_kpi_shape(slide, Inches(4.3), Inches(2.5), Inches(1.8), Inches(1.5), "CÔNG SUẤT", f"{kpi['occupancy']:.1f}%", "Mục tiêu >50%", RGBColor(0, 120, 212))
@@ -270,24 +165,21 @@ def export_pptx(kpi, df_comp, df_status, top_users, top_drivers, df_bad_trips, s
     add_kpi_shape(slide, Inches(8.1), Inches(2.5), Inches(1.8), Inches(1.5), "HỦY/TỪ CHỐI", f"{kpi['cancel_rate'] + kpi['reject_rate']:.1f}%", "Tỷ lệ Fail", RGBColor(209, 52, 56))
 
     if "Biểu đồ Tổng quan" in selected_options:
-        slide = prs.slides.add_slide(prs.slide_layouts[5])
-        slide.shapes.title.text = "PHÂN TÍCH CẤU TRÚC SỬ DỤNG"
+        slide = prs.slides.add_slide(prs.slide_layouts[5]); slide.shapes.title.text = "PHÂN TÍCH CẤU TRÚC SỬ DỤNG"
         img1 = get_chart_img(df_comp.head(8), 'Value', 'Category', kind=chart_prefs.get('structure', 'bar'), title='Top Đơn Vị')
         slide.shapes.add_picture(img1, Inches(0.5), Inches(1.8), Inches(4.5), Inches(3.5))
         img2 = get_chart_img(df_scope, 'Số lượng', 'Phạm vi', kind=chart_prefs.get('scope', 'pie'), title='Phạm Vi')
         slide.shapes.add_picture(img2, Inches(5.2), Inches(1.8), Inches(4.5), Inches(3.5))
 
     if "Bảng Xếp Hạng (Top User/Driver)" in selected_options:
-        slide = prs.slides.add_slide(prs.slide_layouts[5])
-        slide.shapes.title.text = "BẢNG XẾP HẠNG HOẠT ĐỘNG"
+        slide = prs.slides.add_slide(prs.slide_layouts[5]); slide.shapes.title.text = "BẢNG XẾP HẠNG HOẠT ĐỘNG"
         img_u = get_chart_img(top_users.head(8), 'Số_chuyến', 'Người sử dụng xe', kind=chart_prefs.get('top_user', 'bar'), title='Top Users', color='#8764b8')
         slide.shapes.add_picture(img_u, Inches(0.5), Inches(1.8), Inches(4.5), Inches(3.5))
         img_d = get_chart_img(top_drivers.head(8), 'Số_chuyến', 'Tên tài xế', kind=chart_prefs.get('top_driver', 'bar'), title='Top Drivers', color='#00cc6a')
         slide.shapes.add_picture(img_d, Inches(5.2), Inches(1.8), Inches(4.5), Inches(3.5))
 
     if "Danh sách Hủy/Từ chối" in selected_options:
-        slide = prs.slides.add_slide(prs.slide_layouts[5])
-        slide.shapes.title.text = "CHI TIẾT ĐƠN HỦY / TỪ CHỐI"
+        slide = prs.slides.add_slide(prs.slide_layouts[5]); slide.shapes.title.text = "CHI TIẾT ĐƠN HỦY / TỪ CHỐI"
         if not df_bad_trips.empty:
             wanted_cols = ['Start_Str', 'User', 'Status', 'Note']
             avail_cols = [c for c in wanted_cols if c in df_bad_trips.columns]
@@ -298,27 +190,18 @@ def export_pptx(kpi, df_comp, df_status, top_users, top_drivers, df_bad_trips, s
                     cell = table.cell(0, i); cell.text = h
                 for i, row in enumerate(df_bad_trips.head(9).itertuples(), start=1):
                     for j, col_name in enumerate(avail_cols):
-                        val = getattr(row, col_name, "")
-                        table.cell(i, j).text = str(val)[:30]
+                        val = getattr(row, col_name, ""); table.cell(i, j).text = str(val)[:30]
 
-    out = BytesIO(); prs.save(out); out.seek(0)
-    return out
+    out = BytesIO(); prs.save(out); out.seek(0); return out
 
 # --- 5. GIAO DIỆN CHÍNH ---
 st.title("📊 Phước Minh - Hệ Thống Quản Trị & Tối Ưu Hóa Đội Xe")
 uploaded_file = st.file_uploader("Upload Excel", type=['xlsx'], label_visibility="collapsed")
 
 if uploaded_file:
-    # --- LOAD DỮ LIỆU VÀ LẤY SỐ XE THỰC TẾ ---
-    data_load, real_car_count = load_data_final(uploaded_file)
+    df, real_car_count = load_data_final(uploaded_file)
+    if isinstance(df, str): st.error(df); st.stop()
     
-    if isinstance(data_load, str): # Nếu trả về chuỗi lỗi
-        st.error(data_load)
-        st.stop()
-    else:
-        df = data_load
-
-    # --- SIDEBAR FILTERS ---
     with st.sidebar:
         st.header("🗂️ Bộ Lọc Dữ Liệu")
         min_date, max_date = df['Start'].min().date(), df['Start'].max().date()
@@ -330,87 +213,59 @@ if uploaded_file:
             
         st.markdown("---")
         st.caption("Lọc theo tổ chức (Drill-down):")
-        
         locs = ["Tất cả"] + sorted(df_date_filtered['Location'].unique().tolist())
         sel_loc = st.selectbox("1. Khu vực (Region):", locs)
         df_l1 = df_date_filtered if sel_loc == "Tất cả" else df_date_filtered[df_date_filtered['Location'] == sel_loc]
-        
         comps = ["Tất cả"] + sorted(df_l1['Công ty'].unique().tolist())
         sel_comp = st.selectbox("2. Công ty (Entity):", comps)
         df_l2 = df_l1 if sel_comp == "Tất cả" else df_l1[df_l1['Công ty'] == sel_comp]
-        
         bus = ["Tất cả"] + sorted(df_l2['BU'].unique().tolist())
         sel_bu = st.selectbox("3. Phòng ban (BU):", bus)
         df_filtered = df_l2 if sel_bu == "Tất cả" else df_l2[df_l2['BU'] == sel_bu]
-        
-        st.markdown("---")
-        st.write(f"🔍 Đang xem: **{len(df_filtered)}** chuyến")
+        st.markdown("---"); st.write(f"🔍 Đang xem: **{len(df_filtered)}** chuyến")
 
     if df_filtered.empty: st.warning("Không có dữ liệu."); st.stop()
 
-    # --- KPI CALCULATION (CÔNG THỨC MỚI) ---
-    # Nếu lọc theo Region, có thể số xe sẽ ít hơn tổng 30 xe.
-    # Tuy nhiên để tính Occupancy chuẩn theo "Tổng nguồn lực", ta nên dùng tổng xe khả dụng tại khu vực đó.
-    # Logic: Nếu chọn Tất cả -> 30 xe. Nếu chọn HN -> đếm xe HN.
-    
-    # Đếm số xe hoạt động trong vùng dữ liệu đã lọc (để chính xác hơn cho từng vùng)
-    active_cars_in_filter = df_filtered['Biển số xe'].nunique()
-    
-    # Nếu user muốn dùng số cố định 30 cho toàn quốc:
-    # total_cars_kpi = real_car_count if sel_loc == "Tất cả" else active_cars_in_filter
-    # Nhưng an toàn nhất là dùng số xe thực tế xuất hiện trong filter hoặc real_car_count nếu không filter.
-    
-    total_cars_kpi = real_car_count if real_car_count > 0 else 30 # Fallback 30 nếu không đọc được
-    if sel_loc != "Tất cả":
-         # Nếu lọc, ước tính số xe theo tỷ lệ hoặc đếm thực tế
-         total_cars_kpi = active_cars_in_filter if active_cars_in_filter > 0 else 1
+    # --- KPI CALCULATION ---
+    # Tự động tính số xe: Nếu lọc, lấy số xe xuất hiện. Nếu không lọc, lấy tổng xe.
+    if sel_loc == "Tất cả" and sel_comp == "Tất cả" and sel_bu == "Tất cả":
+        total_cars_kpi = real_car_count if real_car_count > 0 else 30
+    else:
+        total_cars_kpi = df_filtered['Biển số xe'].nunique()
+        if total_cars_kpi == 0: total_cars_kpi = 1 # Tránh chia cho 0
 
     days = max((df_filtered['Start'].max() - df_filtered['Start'].min()).days + 1, 1)
-    
     total_trips = len(df_filtered)
     total_hours = df_filtered['Duration'].sum()
     
-    # --- CÔNG THỨC OCCUPANCY ĐÃ SỬA: 8h/ngày ---
-    occupancy_cap = total_cars_kpi * days * 8 
+    # CÔNG THỨC 8h/ngày như yêu cầu
+    occupancy_cap = total_cars_kpi * days * 8
     occupancy = (total_hours / occupancy_cap * 100) if occupancy_cap > 0 else 0
     
     counts = df_filtered['Tình trạng đơn yêu cầu'].fillna('Unknown').value_counts()
-    completed = counts.get('CLOSED', 0) + counts.get('APPROVED', 0)
-    canceled = counts.get('CANCELED', 0) + counts.get('CANCELLED', 0) + counts.get('REJECTED_BY_ADMIN', 0)
-    
-    suc_rate = (completed / total_trips * 100) if total_trips > 0 else 0
-    fail_rate = (canceled / total_trips * 100) if total_trips > 0 else 0
+    suc_rate = ((counts.get('CLOSED', 0) + counts.get('APPROVED', 0)) / total_trips * 100) if total_trips > 0 else 0
+    fail_rate = ((counts.get('CANCELED', 0) + counts.get('CANCELLED', 0) + counts.get('REJECTED_BY_ADMIN', 0)) / total_trips * 100) if total_trips > 0 else 0
 
     # --- KPI UI ---
     cols = st.columns(5)
     cards = [
         {"title": "Tổng Chuyến", "val": f"{total_trips}", "sub": "∑ Đếm số dòng", "color": "#0078d4", "icon": "🚘", "is_percent": False},
         {"title": "Giờ Vận Hành", "val": f"{total_hours:,.0f}", "sub": "∑ (Giờ về - Giờ đi)", "color": "#0078d4", "icon": "⏱️", "is_percent": False},
-        {"title": "Công Suất", "val": f"{occupancy:.1f}%", "sub": f"Tổng Giờ / ({total_cars_kpi}xe * {days}ngày * 8h)", "color": "#0078d4", "icon": "📉", "is_percent": True, "pct_val": min(occupancy, 100)},
-        {"title": "Hoàn Thành", "val": f"{suc_rate:.1f}%", "sub": "Số đơn xong / Tổng đơn", "color": "#107c10", "icon": "✅", "is_percent": True, "pct_val": suc_rate},
-        {"title": "Hủy / Từ Chối", "val": f"{fail_rate:.1f}%", "sub": "Số đơn hủy / Tổng đơn", "color": "#d13438", "icon": "🚫", "is_percent": True, "pct_val": fail_rate},
+        {"title": "Công Suất", "val": f"{occupancy:.1f}%", "sub": f"Giờ / ({total_cars_kpi}xe * {days}ngày * 8h)", "color": "#0078d4", "icon": "📉", "is_percent": True, "pct_val": min(occupancy, 100)},
+        {"title": "Hoàn Thành", "val": f"{suc_rate:.1f}%", "sub": "Tỷ lệ thành công", "color": "#107c10", "icon": "✅", "is_percent": True, "pct_val": suc_rate},
+        {"title": "Hủy / Từ Chối", "val": f"{fail_rate:.1f}%", "sub": "Tỷ lệ thất bại", "color": "#d13438", "icon": "🚫", "is_percent": True, "pct_val": fail_rate},
     ]
 
     for col, card in zip(cols, cards):
-        progress_html = ""
-        if card["is_percent"]:
-            progress_html = f'<div class="progress-bg"><div class="progress-fill" style="width: {card["pct_val"]}%; background-color: {card["color"]}"></div></div>'
-        else:
-            progress_html = '<div style="height: 24px;"></div>' 
-
+        progress_html = f'<div class="progress-bg"><div class="progress-fill" style="width: {card["pct_val"]}%; background-color: {card["color"]}"></div></div>' if card["is_percent"] else '<div style="height: 24px;"></div>'
         html_code = f"""<div class="kpi-card" style="border-top: 4px solid {card['color']}">
-<div class="kpi-header">
-<span class="kpi-title" style="color: {card['color']}">{card['title']}</span>
-<span class="kpi-icon">{card['icon']}</span>
-</div>
-<div class="kpi-value">{card['val']}</div>
-{progress_html}
-<div class="kpi-formula">{card['sub']}</div>
-</div>"""
+<div class="kpi-header"><span class="kpi-title" style="color: {card['color']}">{card['title']}</span><span class="kpi-icon">{card['icon']}</span></div>
+<div class="kpi-value">{card['val']}</div>{progress_html}<div class="kpi-formula">{card['sub']}</div></div>"""
         col.markdown(html_code, unsafe_allow_html=True)
 
-    # --- MAIN TABS ---
-    t1, t2, t3 = st.tabs(["📊 Phân Tích Đơn Vị", "🏆 Bảng Xếp Hạng (Chi tiết)", "📉 Chất Lượng Vận Hành"])
+    # --- TABS ---
+    # THÊM TAB 4 ĐỂ ĐỐI SOÁT
+    t1, t2, t3, t4 = st.tabs(["📊 Phân Tích Đơn Vị", "🏆 Bảng Xếp Hạng", "📉 Chất Lượng", "⚙️ Chi Tiết & Đối Soát"])
     
     chart_prefs = {}
     kind_map = {"Thanh ngang (Bar)": "bar", "Thanh dọc (Column)": "column", "Tròn (Pie)": "pie"}
@@ -419,79 +274,53 @@ if uploaded_file:
         c1, c2 = st.columns([2, 1])
         with c1:
             chart_type_struct = st.selectbox("Kiểu biểu đồ Cấu trúc:", list(kind_map.keys()), index=0, key="c_struct")
-            kind_struct = kind_map[chart_type_struct]
-            chart_prefs['structure'] = kind_struct
-
-            if sel_comp == "Tất cả":
-                df_g = df_filtered['Công ty'].value_counts().reset_index(); df_g.columns = ['Category', 'Value']; title_c = "Theo Công Ty"
-            elif sel_bu == "Tất cả":
-                df_g = df_filtered['BU'].value_counts().reset_index(); df_g.columns = ['Category', 'Value']; title_c = f"Theo Phòng Ban ({sel_comp})"
-            else:
-                df_g = df_filtered['Người sử dụng xe'].value_counts().head(10).reset_index(); df_g.columns = ['Category', 'Value']; title_c = f"Top NV ({sel_bu})"
+            chart_prefs['structure'] = kind_map[chart_type_struct]
+            if sel_comp == "Tất cả": df_g = df_filtered['Công ty'].value_counts().reset_index(); df_g.columns = ['Category', 'Value']; title_c = "Theo Công Ty"
+            elif sel_bu == "Tất cả": df_g = df_filtered['BU'].value_counts().reset_index(); df_g.columns = ['Category', 'Value']; title_c = f"Theo Phòng Ban ({sel_comp})"
+            else: df_g = df_filtered['Người sử dụng xe'].value_counts().head(10).reset_index(); df_g.columns = ['Category', 'Value']; title_c = f"Top NV ({sel_bu})"
             
-            if kind_struct == "bar": fig = px.bar(df_g, x='Value', y='Category', orientation='h', text='Value', title=title_c)
-            elif kind_struct == "column": fig = px.bar(df_g, x='Category', y='Value', text='Value', title=title_c)
+            if chart_prefs['structure'] == "bar": fig = px.bar(df_g, x='Value', y='Category', orientation='h', text='Value', title=title_c)
+            elif chart_prefs['structure'] == "column": fig = px.bar(df_g, x='Category', y='Value', text='Value', title=title_c)
             else: fig = px.pie(df_g, values='Value', names='Category', title=title_c)
             st.plotly_chart(fig, use_container_width=True)
         
         with c2:
             chart_type_scope = st.selectbox("Kiểu biểu đồ Phạm vi:", list(kind_map.keys()), index=2, key="c_scope")
-            kind_scope = kind_map[chart_type_scope]
-            chart_prefs['scope'] = kind_scope
-
+            chart_prefs['scope'] = kind_map[chart_type_scope]
             if 'Phạm Vi' in df_filtered.columns:
-                df_sc = df_filtered['Phạm Vi'].value_counts().reset_index()
-                df_sc.columns = ['Phạm vi', 'Số lượng']
-                
-                if kind_scope == "bar": fig_s = px.bar(df_sc, x='Số lượng', y='Phạm vi', orientation='h', text='Số lượng', title="Phạm Vi Di Chuyển")
-                elif kind_scope == "column": fig_s = px.bar(df_sc, x='Phạm vi', y='Số lượng', text='Số lượng', title="Phạm Vi Di Chuyển")
+                df_sc = df_filtered['Phạm Vi'].value_counts().reset_index(); df_sc.columns = ['Phạm vi', 'Số lượng']
+                if chart_prefs['scope'] == "bar": fig_s = px.bar(df_sc, x='Số lượng', y='Phạm vi', orientation='h', text='Số lượng', title="Phạm Vi Di Chuyển")
+                elif chart_prefs['scope'] == "column": fig_s = px.bar(df_sc, x='Phạm vi', y='Số lượng', text='Số lượng', title="Phạm Vi Di Chuyển")
                 else: fig_s = px.pie(df_sc, values='Số lượng', names='Phạm vi', hole=0.5, title="Phạm Vi Di Chuyển")
                 st.plotly_chart(fig_s, use_container_width=True)
+                
+                # --- THÊM: CHECK BẢNG PHẠM VI (YÊU CẦU 1) ---
+                with st.expander("🔍 Kiểm tra chi tiết Phạm Vi (Xem tại đây)"):
+                    st.write("Dữ liệu Lộ trình & Phân loại:")
+                    st.dataframe(df_filtered[['Ngày khởi hành', 'Lộ trình', 'Phạm Vi']], use_container_width=True)
 
     with t2:
-        df_user_stats = df_filtered.groupby('Người sử dụng xe').agg(
-            Số_chuyến=('Start', 'count'),
-            Công_ty=('Công ty', lambda x: x.mode()[0] if not x.mode().empty else 'Unknown')
-        ).reset_index().sort_values('Số_chuyến', ascending=False)
-        
-        def get_top_route(series):
-            if series.empty: return "N/A"
-            m = series.mode()
-            return m[0] if not m.empty else series.iloc[0]
-
-        df_driver_stats = df_filtered.groupby('Tên tài xế').agg(
-            Số_chuyến=('Start', 'count'),
-            Tuyến_hay_chạy=('Lộ trình', get_top_route)
-        ).reset_index().sort_values('Số_chuyến', ascending=False)
+        df_user_stats = df_filtered.groupby('Người sử dụng xe').agg(Số_chuyến=('Start', 'count'), Công_ty=('Công ty', lambda x: x.mode()[0] if not x.mode().empty else 'Unknown')).reset_index().sort_values('Số_chuyến', ascending=False)
+        df_driver_stats = df_filtered.groupby('Tên tài xế').agg(Số_chuyến=('Start', 'count'), Tuyến_hay_chạy=('Lộ trình', lambda x: x.mode()[0] if not x.mode().empty else 'N/A')).reset_index().sort_values('Số_chuyến', ascending=False)
 
         c_u, c_d = st.columns(2)
         with c_u:
             type_u = st.selectbox("Biểu đồ Top User:", list(kind_map.keys()), index=0, key="c_user")
-            kind_u = kind_map[type_u]
-            chart_prefs['top_user'] = kind_u
-            
+            chart_prefs['top_user'] = kind_map[type_u]
             st.write("##### 🥇 Top User (Kèm Công ty)")
-            if kind_u == "bar": 
-                fig_u = px.bar(df_user_stats.head(10), x='Số_chuyến', y='Người sử dụng xe', orientation='h', text='Số_chuyến', hover_data=['Công_ty'], color_discrete_sequence=['#8764b8'])
-            elif kind_u == "column": 
-                fig_u = px.bar(df_user_stats.head(10), x='Người sử dụng xe', y='Số_chuyến', text='Số_chuyến', hover_data=['Công_ty'], color_discrete_sequence=['#8764b8'])
-            else: 
-                fig_u = px.pie(df_user_stats.head(10), values='Số_chuyến', names='Người sử dụng xe', hover_data=['Công_ty'])
+            if chart_prefs['top_user'] == "bar": fig_u = px.bar(df_user_stats.head(10), x='Số_chuyến', y='Người sử dụng xe', orientation='h', text='Số_chuyến', hover_data=['Công_ty'], color_discrete_sequence=['#8764b8'])
+            elif chart_prefs['top_user'] == "column": fig_u = px.bar(df_user_stats.head(10), x='Người sử dụng xe', y='Số_chuyến', text='Số_chuyến', hover_data=['Công_ty'], color_discrete_sequence=['#8764b8'])
+            else: fig_u = px.pie(df_user_stats.head(10), values='Số_chuyến', names='Người sử dụng xe', hover_data=['Công_ty'])
             st.plotly_chart(fig_u, use_container_width=True)
             st.dataframe(df_user_stats.head(10), use_container_width=True, hide_index=True)
 
         with c_d:
             type_d = st.selectbox("Biểu đồ Top Driver:", list(kind_map.keys()), index=0, key="c_driver")
-            kind_d = kind_map[type_d]
-            chart_prefs['top_driver'] = kind_d
-            
+            chart_prefs['top_driver'] = kind_map[type_d]
             st.write("##### 🚘 Top Driver (Kèm Tuyến phổ biến)")
-            if kind_d == "bar": 
-                fig_d = px.bar(df_driver_stats.head(10), x='Số_chuyến', y='Tên tài xế', orientation='h', text='Số_chuyến', hover_data=['Tuyến_hay_chạy'], color_discrete_sequence=['#00cc6a'])
-            elif kind_d == "column": 
-                fig_d = px.bar(df_driver_stats.head(10), x='Tên tài xế', y='Số_chuyến', text='Số_chuyến', hover_data=['Tuyến_hay_chạy'], color_discrete_sequence=['#00cc6a'])
-            else: 
-                fig_d = px.pie(df_driver_stats.head(10), values='Số_chuyến', names='Tên tài xế', hover_data=['Tuyến_hay_chạy'])
+            if chart_prefs['top_driver'] == "bar": fig_d = px.bar(df_driver_stats.head(10), x='Số_chuyến', y='Tên tài xế', orientation='h', text='Số_chuyến', hover_data=['Tuyến_hay_chạy'], color_discrete_sequence=['#00cc6a'])
+            elif chart_prefs['top_driver'] == "column": fig_d = px.bar(df_driver_stats.head(10), x='Tên tài xế', y='Số_chuyến', text='Số_chuyến', hover_data=['Tuyến_hay_chạy'], color_discrete_sequence=['#00cc6a'])
+            else: fig_d = px.pie(df_driver_stats.head(10), values='Số_chuyến', names='Tên tài xế', hover_data=['Tuyến_hay_chạy'])
             st.plotly_chart(fig_d, use_container_width=True)
             st.dataframe(df_driver_stats.head(10), use_container_width=True, hide_index=True)
 
@@ -499,17 +328,11 @@ if uploaded_file:
         c_status_left, c_status_right = st.columns(2)
         with c_status_left:
             chart_type_status = st.selectbox("Kiểu biểu đồ Trạng thái:", list(kind_map.keys()), index=2, key="c_status")
-            kind_st = kind_map[chart_type_status]
-            chart_prefs['status'] = kind_st
-
+            chart_prefs['status'] = kind_map[chart_type_status]
             st.write("#### Tỷ lệ Trạng thái")
             df_st = counts.reset_index(); df_st.columns = ['Status', 'Count']
-            
-            if kind_st == "pie":
-                fig_st = px.pie(df_st, values='Count', names='Status', hole=0.4, color='Status',
-                                 color_discrete_map={'CLOSED':'#107c10', 'CANCELED':'#d13438', 'REJECTED_BY_ADMIN':'#a80000'})
-                fig_st.update_traces(textinfo='percent+label')
-            elif kind_st == "bar": fig_st = px.bar(df_st, x='Count', y='Status', orientation='h', text='Count', color='Status')
+            if chart_prefs['status'] == "pie": fig_st = px.pie(df_st, values='Count', names='Status', hole=0.4, color='Status', color_discrete_map={'CLOSED':'#107c10', 'CANCELED':'#d13438', 'REJECTED_BY_ADMIN':'#a80000'})
+            elif chart_prefs['status'] == "bar": fig_st = px.bar(df_st, x='Count', y='Status', orientation='h', text='Count', color='Status')
             else: fig_st = px.bar(df_st, x='Status', y='Count', text='Count', color='Status')
             st.plotly_chart(fig_st, use_container_width=True)
 
@@ -517,27 +340,45 @@ if uploaded_file:
             bad_trips = df_filtered[df_filtered['Tình trạng đơn yêu cầu'].isin(['CANCELED', 'CANCELLED', 'REJECTED_BY_ADMIN'])].copy()
             if not bad_trips.empty:
                 st.write(f"##### Danh sách {len(bad_trips)} chuyến bị Hủy/Từ chối")
-                desired_cols = ['Ngày khởi hành', 'Người sử dụng xe', 'Tên tài xế', 'Lý do', 'Note', 'Tình trạng đơn yêu cầu']
-                valid_cols = [c for c in desired_cols if c in bad_trips.columns]
-                st.dataframe(bad_trips[valid_cols], use_container_width=True)
-            else:
-                st.success("Không có chuyến nào bị hủy trong giai đoạn này.")
+                wanted = ['Ngày khởi hành', 'Người sử dụng xe', 'Tên tài xế', 'Lý do', 'Note', 'Tình trạng đơn yêu cầu']
+                actual = [c for c in wanted if c in bad_trips.columns]
+                st.dataframe(bad_trips[actual], use_container_width=True)
+            else: st.success("Không có chuyến nào bị hủy.")
+
+    # --- TAB 4: ĐỐI SOÁT & KIỂM TRA (TÍNH NĂNG MỚI) ---
+    with t4:
+        st.subheader("⚙️ Đối Soát Công Thức & Dữ Liệu")
+        st.info("Tab này dùng để kiểm tra tính chính xác của các chỉ số KPI.")
+        
+        c_kpi_check, c_chart_check = st.columns(2)
+        
+        with c_kpi_check:
+            st.write("#### 1. Các tham số tính Công Suất")
+            st.write(f"- **Tổng số xe ($N$):** {total_cars_kpi} xe")
+            st.write(f"- **Số ngày trong kỳ lọc ($D$):** {days} ngày (từ {df_filtered['Start'].min().date()} đến {df_filtered['Start'].max().date()})")
+            st.write(f"- **Giờ tiêu chuẩn/ngày:** 8 giờ")
+            st.markdown("---")
+            st.write(f"👉 **Năng lực tối đa (Capacity):** {total_cars_kpi} * {days} * 8 = **{occupancy_cap:,.0f} giờ**")
+            st.write(f"👉 **Thực tế sử dụng (Actual):** **{total_hours:,.0f} giờ**")
+            st.metric("Kết quả Occupancy", f"{occupancy:.2f}%")
+            
+        with c_chart_check:
+            st.write("#### 2. Biểu đồ So Sánh Năng Lực")
+            df_check = pd.DataFrame({
+                'Loại': ['Năng Lực Tối Đa (Capacity)', 'Thực Tế Sử Dụng (Actual)'],
+                'Giờ': [occupancy_cap, total_hours]
+            })
+            fig_check = px.bar(df_check, x='Loại', y='Giờ', text='Giờ', color='Loại', 
+                               color_discrete_map={'Năng Lực Tối Đa (Capacity)': '#e9ecef', 'Thực Tế Sử Dụng (Actual)': '#0078d4'})
+            st.plotly_chart(fig_check, use_container_width=True)
 
     st.divider()
     st.subheader("📥 Xuất Báo Cáo PowerPoint")
-    
     c_opt, c_btn = st.columns([2, 1])
     with c_opt:
-        pptx_options = st.multiselect(
-            "Chọn nội dung muốn đưa vào Slide:",
-            ["Biểu đồ Tổng quan", "Bảng Xếp Hạng (Top User/Driver)", "Danh sách Hủy/Từ chối"],
-            default=["Biểu đồ Tổng quan", "Bảng Xếp Hạng (Top User/Driver)"]
-        )
-    
+        pptx_options = st.multiselect("Chọn nội dung Slide:", ["Biểu đồ Tổng quan", "Bảng Xếp Hạng (Top User/Driver)", "Danh sách Hủy/Từ chối"], default=["Biểu đồ Tổng quan", "Bảng Xếp Hạng (Top User/Driver)"])
     with c_btn:
-        st.write("") 
-        st.write("") 
-        
+        st.write(""); st.write("")
         last_month_str = "N/A"
         try:
             if not df.empty and 'Tháng' in df.columns:
@@ -545,26 +386,15 @@ if uploaded_file:
                 if not valid_months.empty: last_month_str = valid_months.max()
         except: pass
 
-        kpi_data = {
-            'trips': total_trips, 'hours': total_hours, 'occupancy': occupancy,
-            'success_rate': suc_rate, 'cancel_rate': fail_rate, 'reject_rate': 0,
-            'last_month': last_month_str
-        }
-        
+        kpi_data = {'trips': total_trips, 'hours': total_hours, 'occupancy': occupancy, 'success_rate': suc_rate, 'cancel_rate': fail_rate, 'reject_rate': 0, 'last_month': last_month_str}
         df_status_exp = counts.reset_index(); df_status_exp.columns = ['Trạng thái', 'Số lượng']
+        if sel_comp == "Tất cả": df_comp_exp = df_filtered['Công ty'].value_counts().reset_index(); df_comp_exp.columns=['Category', 'Value']
+        elif sel_bu == "Tất cả": df_comp_exp = df_filtered['BU'].value_counts().reset_index(); df_comp_exp.columns=['Category', 'Value']
+        else: df_comp_exp = df_filtered['Người sử dụng xe'].value_counts().head(10).reset_index(); df_comp_exp.columns=['Category', 'Value']
         
-        if sel_comp == "Tất cả": 
-            df_comp_exp = df_filtered['Công ty'].value_counts().reset_index(); df_comp_exp.columns=['Category', 'Value']
-        elif sel_bu == "Tất cả":
-            df_comp_exp = df_filtered['BU'].value_counts().reset_index(); df_comp_exp.columns=['Category', 'Value']
-        else:
-            df_comp_exp = df_filtered['Người sử dụng xe'].value_counts().head(10).reset_index(); df_comp_exp.columns=['Category', 'Value']
-
-        if 'Phạm Vi' in df_filtered.columns:
-            df_scope_exp = df_filtered['Phạm Vi'].value_counts().reset_index()
-            df_scope_exp.columns = ['Phạm vi', 'Số lượng']
+        if 'Phạm Vi' in df_filtered.columns: df_scope_exp = df_filtered['Phạm Vi'].value_counts().reset_index(); df_scope_exp.columns = ['Phạm vi', 'Số lượng']
         else: df_scope_exp = pd.DataFrame(columns=['Phạm vi', 'Số lượng'])
-
+        
         df_bad_exp = pd.DataFrame()
         if not bad_trips.empty:
             df_bad_exp = bad_trips.copy()
@@ -572,14 +402,7 @@ if uploaded_file:
             df_bad_exp = df_bad_exp.rename(columns={'Người sử dụng xe': 'User', 'Tình trạng đơn yêu cầu': 'Status'})
 
         pptx_file = export_pptx(kpi_data, df_comp_exp, df_status_exp, df_user_stats, df_driver_stats, df_bad_exp, pptx_options, chart_prefs, df_scope_exp)
-        
-        st.download_button(
-            label="Tải file .PPTX ngay",
-            data=pptx_file,
-            file_name="Bao_Cao_Van_Hanh_Full.pptx",
-            mime="application/vnd.openxmlformats-officedocument.presentationml.presentation",
-            type="primary"
-        )
+        st.download_button(label="Tải file .PPTX ngay", data=pptx_file, file_name="Bao_Cao_Van_Hanh_Full.pptx", mime="application/vnd.openxmlformats-officedocument.presentationml.presentation", type="primary")
 
 else:
     st.info("👋 Vui lòng upload file Excel dữ liệu.")
