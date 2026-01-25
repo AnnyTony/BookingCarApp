@@ -92,16 +92,12 @@ def load_data_final(file):
                 df_cbnv = df_cbnv.drop_duplicates(subset=['Full Name'], keep='first')
                 df_final = df_final.merge(df_cbnv, left_on='Người sử dụng xe', right_on='Full Name', how='left')
 
-        # --- FIX LỖI CRASH (QUAN TRỌNG): Đảm bảo các cột cần thiết luôn tồn tại ---
-        required_cols = ['Công ty', 'BU', 'Location', 'Tên tài xế', 'Lý do', 'Note', 'Tình trạng đơn yêu cầu']
-        for col in required_cols:
-            if col not in df_final.columns:
-                df_final[col] = "Unknown" if col in ['Công ty', 'BU', 'Location'] else ""
-
         # Fillna & Format
         for c in ['Công ty', 'BU', 'Location']:
-            df_final[c] = df_final[c].fillna('Unknown').astype(str)
+            if c not in df_final.columns: df_final[c] = 'Unknown'
+            else: df_final[c] = df_final[c].fillna('Unknown').astype(str)
         
+        if 'Tên tài xế' not in df_final.columns: df_final['Tên tài xế'] = 'Chưa cập nhật'
         df_final['Tên tài xế'] = df_final['Tên tài xế'].fillna('Chưa cập nhật')
 
         df_final['Start'] = pd.to_datetime(df_final['Ngày khởi hành'].astype(str) + ' ' + df_final['Giờ khởi hành'].astype(str), errors='coerce')
@@ -111,6 +107,12 @@ def load_data_final(file):
         df_final['Duration'] = (df_final['End'] - df_final['Start']).dt.total_seconds() / 3600
         df_final['Tháng'] = df_final['Start'].dt.strftime('%Y-%m')
         
+        # Scope
+        def check_scope(r):
+            s = str(r).lower()
+            return "Đi Tỉnh" if any(x in s for x in ['tỉnh', 'tp.', 'bình dương', 'đồng nai', 'vũng tàu', 'hà nội']) else "Nội thành"
+        df_final['Phạm Vi'] = df_final['Lộ trình'].apply(check_scope) if 'Lộ trình' in df_final.columns else 'Unknown'
+
         return df_final
     except Exception as e: return f"Lỗi: {str(e)}"
 
@@ -173,26 +175,24 @@ def export_pptx(kpi, df_comp, df_status, top_users, top_drivers, df_bad_trips, s
         slide = prs.slides.add_slide(prs.slide_layouts[5])
         slide.shapes.title.text = "CHI TIẾT ĐƠN HỦY / TỪ CHỐI"
         if not df_bad_trips.empty:
-            rows, cols = min(len(df_bad_trips)+1, 10), 4
+            # Chỉ lấy các cột CÓ trong dữ liệu
+            wanted_cols = ['Start_Str', 'User', 'Status', 'Note']
+            avail_cols = [c for c in wanted_cols if c in df_bad_trips.columns]
+            
+            rows, cols = min(len(df_bad_trips)+1, 10), len(avail_cols)
             table = slide.shapes.add_table(rows, cols, Inches(0.5), Inches(1.5), Inches(9), Inches(0.8)).table
             
-            headers = ['Ngày', 'Người dùng', 'Trạng thái', 'Ghi chú']
-            for i, h in enumerate(headers):
+            for i, h in enumerate(avail_cols):
                 cell = table.cell(0, i)
                 cell.text = h
                 cell.fill.solid(); cell.fill.fore_color.rgb = RGBColor(0, 120, 212)
                 cell.text_frame.paragraphs[0].font.color.rgb = RGBColor(255, 255, 255)
             
-            # Safe access to attributes using getattr or fallback
             for i, row in enumerate(df_bad_trips.head(9).itertuples(), start=1):
-                table.cell(i, 0).text = str(row.Start_Str)
-                table.cell(i, 1).text = str(row.User)
-                table.cell(i, 2).text = str(row.Status)
-                # Xử lý an toàn cho cột Note/Lý do
-                note_val = str(getattr(row, 'Note', ''))
-                reason_val = str(getattr(row, 'Lý do', ''))
-                final_note = note_val if note_val != 'nan' and note_val else reason_val
-                table.cell(i, 3).text = final_note.replace('nan', '')
+                for j, col_name in enumerate(avail_cols):
+                    # Lấy giá trị động theo tên cột
+                    val = getattr(row, col_name, "")
+                    table.cell(i, j).text = str(val) if str(val) != 'nan' else ""
         else:
             slide.shapes.add_textbox(Inches(1), Inches(2), Inches(5), Inches(1)).text_frame.text = "Không có dữ liệu."
 
@@ -207,7 +207,6 @@ if uploaded_file:
     df = load_data_final(uploaded_file)
     if isinstance(df, str): st.error(df); st.stop()
     
-    # --- BỘ LỌC ---
     with st.sidebar:
         st.header("🗂️ Bộ Lọc")
         min_date, max_date = df['Start'].min().date(), df['Start'].max().date()
@@ -225,7 +224,6 @@ if uploaded_file:
 
     if df.empty: st.warning("Không có dữ liệu."); st.stop()
 
-    # --- TÍNH TOÁN KPI ---
     total_cars = 21
     if 'HCM' in sel_loc or 'NAM' in sel_loc.upper(): total_cars = 16
     elif 'HN' in sel_loc or 'BAC' in sel_loc.upper(): total_cars = 5
@@ -243,7 +241,6 @@ if uploaded_file:
     suc_rate = (completed / total_trips * 100) if total_trips > 0 else 0
     fail_rate = (canceled / total_trips * 100) if total_trips > 0 else 0
 
-    # KPI UI
     cols = st.columns(5)
     cards = [
         {"title": "Tổng Chuyến", "val": f"{total_trips}", "sub": "∑ Đếm số dòng", "color": "#0078d4"},
@@ -262,7 +259,6 @@ if uploaded_file:
         </div>
         """, unsafe_allow_html=True)
 
-    # --- TABS DASHBOARD ---
     t1, t2, t3 = st.tabs(["📊 Tổng Quan & Xu Hướng", "🏆 Bảng Xếp Hạng (Top)", "📉 Chi Tiết Chất Lượng"])
     
     with t1:
@@ -281,6 +277,7 @@ if uploaded_file:
     with t2:
         top_user = df['Người sử dụng xe'].value_counts().reset_index()
         top_user.columns = ['Tên', 'Chuyến']
+        
         top_driver = df['Tên tài xế'].value_counts().reset_index()
         top_driver.columns = ['Tên', 'Chuyến']
 
@@ -296,22 +293,26 @@ if uploaded_file:
         bad_trips = df[df['Tình trạng đơn yêu cầu'].isin(['CANCELED', 'CANCELLED', 'REJECTED_BY_ADMIN'])].copy()
         if not bad_trips.empty:
             st.write(f"##### Danh sách {len(bad_trips)} chuyến bị Hủy/Từ chối")
-            # FIX LỖI: Chỉ chọn các cột thực sự tồn tại
-            target_cols = ['Ngày khởi hành', 'Người sử dụng xe', 'Tên tài xế', 'Lý do', 'Note']
-            valid_cols = [c for c in target_cols if c in bad_trips.columns]
+            
+            # --- FIX LỖI KEYERROR TẠI ĐÂY ---
+            # Danh sách các cột MONG MUỐN hiển thị
+            desired_cols = ['Ngày khởi hành', 'Người sử dụng xe', 'Tên tài xế', 'Lý do', 'Note', 'Tình trạng đơn yêu cầu']
+            
+            # Chỉ lấy các cột THỰC SỰ CÓ trong file Excel
+            valid_cols = [c for c in desired_cols if c in bad_trips.columns]
+            
             st.dataframe(bad_trips[valid_cols], use_container_width=True)
+            # --------------------------------
         else:
             st.success("Không có chuyến nào bị hủy trong giai đoạn này.")
 
-    # --- EXPORT ---
     st.divider()
     st.subheader("📥 Xuất Báo Cáo PowerPoint")
     
     c_opt, c_btn = st.columns([2, 1])
-    
     with c_opt:
         pptx_options = st.multiselect(
-            "Chọn nội dung:",
+            "Chọn nội dung muốn đưa vào Slide:",
             ["Biểu đồ Tổng quan", "Bảng Xếp Hạng (Top User/Driver)", "Danh sách Hủy/Từ chối"],
             default=["Biểu đồ Tổng quan", "Bảng Xếp Hạng (Top User/Driver)"]
         )
@@ -342,7 +343,13 @@ if uploaded_file:
             pptx_options
         )
         
-        st.download_button("Tải file .PPTX ngay", pptx_file, "Bao_Cao_Van_Hanh_Full.pptx", "application/vnd.openxmlformats-officedocument.presentationml.presentation", type="primary")
+        st.download_button(
+            label="Tải file .PPTX ngay",
+            data=pptx_file,
+            file_name="Bao_Cao_Van_Hanh_Full.pptx",
+            mime="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            type="primary"
+        )
 
 else:
     st.info("👋 Vui lòng upload file Excel dữ liệu.")
