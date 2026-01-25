@@ -116,7 +116,7 @@ def load_data_final(file):
         return df_final
     except Exception as e: return f"Lỗi: {str(e)}"
 
-# --- 3. HÀM TẠO ẢNH CHO PPTX (SAFE MODE) ---
+# --- 3. HÀM TẠO ẢNH CHO PPTX (NÂNG CẤP ĐA DẠNG BIỂU ĐỒ) ---
 def get_chart_img(data, x, y, kind='bar', title='', color='#0078d4'):
     plt.figure(figsize=(6, 4))
     
@@ -125,20 +125,25 @@ def get_chart_img(data, x, y, kind='bar', title='', color='#0078d4'):
         img = BytesIO(); plt.savefig(img, format='png'); plt.close(); img.seek(0)
         return img
 
-    if kind == 'bar':
+    if kind == 'bar': # Thanh ngang
         data = data.sort_values(by=x, ascending=True)
         plt.barh(data[y], data[x], color=color)
         plt.xlabel(x)
-    elif kind == 'pie':
-        plt.pie(data[x], labels=data[y], autopct='%1.1f%%', startangle=90, colors=['#107c10', '#d13438', '#0078d4'])
+    elif kind == 'column': # Thanh dọc
+        # Với thanh dọc, x là Categories, y là Values
+        plt.bar(data[y], data[x], color=color) # Matplotlib bar: x=cate, height=val
+        plt.ylabel(x)
+        plt.xticks(rotation=45, ha='right')
+    elif kind == 'pie': # Tròn
+        plt.pie(data[x], labels=data[y], autopct='%1.1f%%', startangle=90, colors=['#107c10', '#d13438', '#0078d4', '#ffc107', '#8764b8'])
     
     plt.title(title, fontsize=12, fontweight='bold')
     plt.tight_layout()
     img = BytesIO(); plt.savefig(img, format='png', dpi=100); plt.close(); img.seek(0)
     return img
 
-# --- 4. HÀM XUẤT PPTX ---
-def export_pptx(kpi, df_comp, df_status, top_users, top_drivers, df_bad_trips, selected_options):
+# --- 4. HÀM XUẤT PPTX (CÓ THAM SỐ LOẠI BIỂU ĐỒ) ---
+def export_pptx(kpi, df_comp, df_status, top_users, top_drivers, df_bad_trips, selected_options, chart_prefs):
     prs = Presentation()
     
     def add_title(title, sub):
@@ -148,6 +153,7 @@ def export_pptx(kpi, df_comp, df_status, top_users, top_drivers, df_bad_trips, s
     
     add_title("BÁO CÁO VẬN HÀNH ĐỘI XE", f"Dữ liệu đến tháng: {kpi['last_month']}")
     
+    # KPI Slide
     slide = prs.slides.add_slide(prs.slide_layouts[1])
     slide.shapes.title.text = "TỔNG QUAN HIỆU SUẤT"
     tf = slide.shapes.placeholders[1].text_frame
@@ -161,10 +167,14 @@ def export_pptx(kpi, df_comp, df_status, top_users, top_drivers, df_bad_trips, s
         slide = prs.slides.add_slide(prs.slide_layouts[5])
         slide.shapes.title.text = "PHÂN BỔ THEO CÔNG TY & TRẠNG THÁI"
         
-        img1 = get_chart_img(df_comp.head(8), 'Số chuyến', 'Công ty', 'bar', 'Top Công Ty')
+        # Lấy loại biểu đồ từ preferences
+        kind_struct = chart_prefs.get('structure', 'bar') # Mặc định bar
+        kind_status = chart_prefs.get('status', 'pie')    # Mặc định pie
+
+        img1 = get_chart_img(df_comp.head(8), 'Số chuyến', 'Công ty', kind=kind_struct, title='Top Công Ty')
         slide.shapes.add_picture(img1, Inches(0.5), Inches(2), Inches(4.5), Inches(3.5))
         
-        img2 = get_chart_img(df_status, 'Số lượng', 'Trạng thái', 'pie', 'Trạng Thái Đơn')
+        img2 = get_chart_img(df_status, 'Số lượng', 'Trạng thái', kind=kind_status, title='Trạng Thái Đơn')
         slide.shapes.add_picture(img2, Inches(5.2), Inches(2), Inches(4.5), Inches(3.5))
 
     if "Bảng Xếp Hạng (Top User/Driver)" in selected_options:
@@ -210,11 +220,10 @@ if uploaded_file:
     df = load_data_final(uploaded_file)
     if isinstance(df, str): st.error(df); st.stop()
     
-    # --- SIDEBAR FILTERS (FULL VERSION) ---
+    # --- SIDEBAR FILTERS ---
     with st.sidebar:
         st.header("🗂️ Bộ Lọc Dữ Liệu")
         
-        # 1. Date Filter
         min_date, max_date = df['Start'].min().date(), df['Start'].max().date()
         date_range = st.date_input("Thời gian:", (min_date, max_date), min_value=min_date, max_value=max_date)
         if len(date_range) == 2:
@@ -223,21 +232,16 @@ if uploaded_file:
             df_date_filtered = df
             
         st.markdown("---")
-        
-        # 2. Hierarchy Filter
         st.caption("Lọc theo tổ chức (Drill-down):")
         
-        # Level 1
         locs = ["Tất cả"] + sorted(df_date_filtered['Location'].unique().tolist())
         sel_loc = st.selectbox("1. Khu vực (Region):", locs)
         df_l1 = df_date_filtered if sel_loc == "Tất cả" else df_date_filtered[df_date_filtered['Location'] == sel_loc]
         
-        # Level 2
         comps = ["Tất cả"] + sorted(df_l1['Công ty'].unique().tolist())
         sel_comp = st.selectbox("2. Công ty (Entity):", comps)
         df_l2 = df_l1 if sel_comp == "Tất cả" else df_l1[df_l1['Công ty'] == sel_comp]
         
-        # Level 3
         bus = ["Tất cả"] + sorted(df_l2['BU'].unique().tolist())
         sel_bu = st.selectbox("3. Phòng ban (BU):", bus)
         df_filtered = df_l2 if sel_bu == "Tất cả" else df_l2[df_l2['BU'] == sel_bu]
@@ -283,24 +287,54 @@ if uploaded_file:
         </div>
         """, unsafe_allow_html=True)
 
-    t1, t2, t3 = st.tabs(["📊 Phân Tích Đơn Vị", "🏆 Bảng Xếp Hạng (Top)", "📉 Chi Tiết Chất Lượng"])
+    # --- MAIN TABS ---
+    t1, t2, t3 = st.tabs(["📊 Phân Tích Đơn Vị", "🏆 Bảng Xếp Hạng (Top)", "📉 Chất Lượng Vận Hành"])
     
+    # Biến lưu cấu hình chart để dùng cho PPTX
+    chart_prefs = {'structure': 'bar', 'status': 'pie'}
+
     with t1:
         c1, c2 = st.columns([2, 1])
         with c1:
+            # --- [NEW] TÙY CHỌN LOẠI CHART ---
+            chart_type_struct = st.selectbox(
+                "Chọn loại biểu đồ Cấu trúc:", 
+                ["Thanh ngang (Bar)", "Thanh dọc (Column)", "Tròn (Pie)"], 
+                index=0, key="chart_struct"
+            )
+            
+            # Mapping lựa chọn sang kind
+            kind_map = {"Thanh ngang (Bar)": "bar", "Thanh dọc (Column)": "column", "Tròn (Pie)": "pie"}
+            selected_kind = kind_map[chart_type_struct]
+            chart_prefs['structure'] = selected_kind # Lưu cấu hình
+
             st.write("#### Phân tích theo Cấu trúc")
+            
+            # Chuẩn bị dữ liệu vẽ chart
             if sel_comp == "Tất cả":
                 df_g = df_filtered['Công ty'].value_counts().reset_index()
-                df_g.columns = ['Công ty', 'Số chuyến']
-                st.plotly_chart(px.bar(df_g, x='Số chuyến', y='Công ty', orientation='h', title="Theo Công Ty"), use_container_width=True)
+                df_g.columns = ['Category', 'Value']
+                title_chart = "Theo Công Ty"
             elif sel_bu == "Tất cả":
                 df_g = df_filtered['BU'].value_counts().reset_index()
-                df_g.columns = ['Phòng ban', 'Số chuyến']
-                st.plotly_chart(px.bar(df_g, x='Số chuyến', y='Phòng ban', orientation='h', title=f"Theo Phòng Ban ({sel_comp})"), use_container_width=True)
+                df_g.columns = ['Category', 'Value']
+                title_chart = f"Theo Phòng Ban ({sel_comp})"
             else:
                 df_g = df_filtered['Người sử dụng xe'].value_counts().head(10).reset_index()
-                df_g.columns = ['Nhân viên', 'Số chuyến']
-                st.plotly_chart(px.bar(df_g, x='Số chuyến', y='Nhân viên', orientation='h', title=f"Top NV ({sel_bu})"), use_container_width=True)
+                df_g.columns = ['Category', 'Value']
+                title_chart = f"Top NV ({sel_bu})"
+            
+            # VẼ CHART THEO LỰA CHỌN
+            if selected_kind == "bar":
+                fig = px.bar(df_g, x='Value', y='Category', orientation='h', text='Value', title=title_chart)
+                fig.update_traces(textposition='outside')
+            elif selected_kind == "column":
+                fig = px.bar(df_g, x='Category', y='Value', text='Value', title=title_chart)
+                fig.update_traces(textposition='outside')
+            else: # pie
+                fig = px.pie(df_g, values='Value', names='Category', title=title_chart)
+            
+            st.plotly_chart(fig, use_container_width=True)
         
         with c2:
             st.write("#### Phạm vi di chuyển")
@@ -325,14 +359,44 @@ if uploaded_file:
             st.dataframe(top_driver.head(10), use_container_width=True, hide_index=True)
 
     with t3:
-        bad_trips = df_filtered[df_filtered['Tình trạng đơn yêu cầu'].isin(['CANCELED', 'CANCELLED', 'REJECTED_BY_ADMIN'])].copy()
-        if not bad_trips.empty:
-            st.write(f"##### Danh sách {len(bad_trips)} chuyến bị Hủy/Từ chối")
-            desired_cols = ['Ngày khởi hành', 'Người sử dụng xe', 'Tên tài xế', 'Lý do', 'Note', 'Tình trạng đơn yêu cầu']
-            valid_cols = [c for c in desired_cols if c in bad_trips.columns]
-            st.dataframe(bad_trips[valid_cols], use_container_width=True)
-        else:
-            st.success("Không có chuyến nào bị hủy trong giai đoạn này.")
+        c_status_left, c_status_right = st.columns(2)
+        
+        with c_status_left:
+             # --- [NEW] TÙY CHỌN LOẠI CHART STATUS ---
+            chart_type_status = st.selectbox(
+                "Chọn loại biểu đồ Trạng thái:", 
+                ["Tròn (Pie)", "Thanh ngang (Bar)", "Thanh dọc (Column)"], 
+                index=0, key="chart_status"
+            )
+            selected_kind_st = kind_map[chart_type_status]
+            chart_prefs['status'] = selected_kind_st # Lưu cấu hình
+
+            st.write("#### Tỷ lệ Trạng thái")
+            df_st = counts.reset_index()
+            df_st.columns = ['Status', 'Count']
+            
+            # Vẽ Chart Status
+            if selected_kind_st == "pie":
+                fig_st = px.pie(df_st, values='Count', names='Status', hole=0.4, 
+                                 color='Status',
+                                 color_discrete_map={'CLOSED':'#107c10', 'CANCELED':'#d13438', 'REJECTED_BY_ADMIN':'#a80000'})
+                fig_st.update_traces(textinfo='percent+label')
+            elif selected_kind_st == "bar":
+                 fig_st = px.bar(df_st, x='Count', y='Status', orientation='h', text='Count', color='Status')
+            else:
+                 fig_st = px.bar(df_st, x='Status', y='Count', text='Count', color='Status')
+
+            st.plotly_chart(fig_st, use_container_width=True)
+
+        with c_status_right:
+            bad_trips = df_filtered[df_filtered['Tình trạng đơn yêu cầu'].isin(['CANCELED', 'CANCELLED', 'REJECTED_BY_ADMIN'])].copy()
+            if not bad_trips.empty:
+                st.write(f"##### Danh sách {len(bad_trips)} chuyến bị Hủy/Từ chối")
+                desired_cols = ['Ngày khởi hành', 'Người sử dụng xe', 'Tên tài xế', 'Lý do', 'Note', 'Tình trạng đơn yêu cầu']
+                valid_cols = [c for c in desired_cols if c in bad_trips.columns]
+                st.dataframe(bad_trips[valid_cols], use_container_width=True)
+            else:
+                st.success("Không có chuyến nào bị hủy trong giai đoạn này.")
 
     st.divider()
     st.subheader("📥 Xuất Báo Cáo PowerPoint")
@@ -349,7 +413,6 @@ if uploaded_file:
         st.write("") 
         st.write("") 
         
-        # --- FIX LỖI TYPE ERROR KHI TÍNH THÁNG MAX ---
         last_month_str = "N/A"
         try:
             if not df.empty and 'Tháng' in df.columns:
@@ -361,7 +424,7 @@ if uploaded_file:
         kpi_data = {
             'trips': total_trips, 'hours': total_hours, 'occupancy': occupancy,
             'success_rate': suc_rate, 'cancel_rate': fail_rate, 'reject_rate': 0,
-            'last_month': last_month_str # Sử dụng biến an toàn đã tính ở trên
+            'last_month': last_month_str
         }
         
         df_status_exp = counts.reset_index(); df_status_exp.columns = ['Trạng thái', 'Số lượng']
@@ -373,7 +436,8 @@ if uploaded_file:
             df_bad_exp['Start_Str'] = df_bad_exp['Start'].dt.strftime('%d/%m')
             df_bad_exp = df_bad_exp.rename(columns={'Người sử dụng xe': 'User', 'Tình trạng đơn yêu cầu': 'Status'})
 
-        pptx_file = export_pptx(kpi_data, df_comp_exp, df_status_exp, top_user, top_driver, df_bad_exp, pptx_options)
+        # TRUYỀN THÊM chart_prefs VÀO HÀM EXPORT
+        pptx_file = export_pptx(kpi_data, df_comp_exp, df_status_exp, top_user, top_driver, df_bad_exp, pptx_options, chart_prefs)
         
         st.download_button(
             label="Tải file .PPTX ngay",
