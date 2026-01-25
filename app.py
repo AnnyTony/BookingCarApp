@@ -9,27 +9,81 @@ from pptx.dml.color import RGBColor
 
 # --- 1. CẤU HÌNH TRANG & CSS ---
 st.set_page_config(page_title="Hệ Thống Quản Trị & Tối Ưu Hóa Đội Xe", page_icon="🚘", layout="wide")
-
 st.markdown("""
 <style>
     .block-container {padding-top: 1rem; padding-bottom: 3rem;}
     
-    /* KPI Card Style */
+    /* MODERN KPI CARD */
     .kpi-card {
-        background-color: white; border-radius: 8px; padding: 15px;
-        box-shadow: 0 1px 3px rgba(0,0,0,0.1); border-left: 5px solid #0078d4;
-        margin-bottom: 10px; height: 100%;
+        background-color: white;
+        border-radius: 12px;
+        padding: 20px;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+        transition: transform 0.2s, box-shadow 0.2s;
+        border: 1px solid #f0f2f6;
+        height: 100%;
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
     }
+    
+    .kpi-card:hover {
+        transform: translateY(-5px);
+        box-shadow: 0 10px 15px rgba(0,0,0,0.1);
+    }
+
+    .kpi-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 10px;
+    }
+
     .kpi-title {
-        font-size: 14px; color: #555; font-weight: 700; 
-        text-transform: uppercase; margin-bottom: 5px;
+        font-size: 14px;
+        color: #6c757d;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
     }
+
+    .kpi-icon {
+        font-size: 20px;
+        background: #f8f9fa;
+        padding: 8px;
+        border-radius: 8px;
+    }
+
     .kpi-value {
-        font-size: 26px; font-weight: 800; color: #222; margin: 0;
+        font-size: 32px;
+        font-weight: 800;
+        color: #212529;
+        margin: 5px 0;
     }
+
     .kpi-formula {
-        font-size: 11px; color: #888; font-style: italic; margin-top: 8px;
-        border-top: 1px solid #eee; padding-top: 5px;
+        font-size: 11px;
+        color: #adb5bd;
+        font-style: italic;
+        margin-top: auto; /* Đẩy xuống đáy */
+        padding-top: 10px;
+        border-top: 1px dashed #eee;
+    }
+
+    /* Progress Bar Style */
+    .progress-bg {
+        background-color: #e9ecef;
+        border-radius: 4px;
+        height: 6px;
+        width: 100%;
+        margin-top: 5px;
+        overflow: hidden;
+    }
+    
+    .progress-fill {
+        height: 100%;
+        border-radius: 4px;
+        transition: width 0.5s ease-in-out;
     }
 </style>
 """, unsafe_allow_html=True)
