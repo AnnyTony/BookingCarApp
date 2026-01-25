@@ -229,8 +229,10 @@ def export_pptx(kpi, df_comp, df_status, top_users, top_drivers, df_bad_trips, c
     # Slide 5: Bad Trips
     if not df_bad_trips.empty:
         slide = prs.slides.add_slide(prs.slide_layouts[5]); slide.shapes.title.text = "CHI TIẾT ĐƠN HỦY / TỪ CHỐI"
+        # --- FIX: CHỌN CỘT AN TOÀN CHO PPTX ---
         wanted_cols = ['Start_Str', 'User', 'Status', 'Note']
         avail_cols = [c for c in wanted_cols if c in df_bad_trips.columns]
+        # --------------------------------------
         rows, cols = min(len(df_bad_trips)+1, 10), len(avail_cols)
         if cols > 0:
             table = slide.shapes.add_table(rows, cols, Inches(0.5), Inches(1.5), Inches(9), Inches(0.8)).table
@@ -289,14 +291,9 @@ if uploaded_file:
     internal_trips = df_filtered[df_filtered['Phân Loại Xe'] == 'Xe Nội bộ']
     hours_internal = internal_trips['Duration'].sum()
     
-    # Số lượng xe nội bộ để tính capacity
-    # Nếu chọn 'Xe Vãng lai' thì occupancy = 0
     if 'Xe Nội bộ' in type_filter:
-        total_internal_fleet = report_info['driver_cars_count'] # Tổng xe sở hữu
-        # Nếu filter theo vùng/công ty thì cần tính lại số xe nội bộ thuộc vùng đó (nếu có dữ liệu mapping)
-        # Tạm thời lấy tổng xe hoạt động trong filter nếu < tổng fleet
+        total_internal_fleet = report_info['driver_cars_count'] 
         active_internal_in_filter = internal_trips['Biển_Clean'].nunique()
-        # Logic: Nếu chọn Tất cả -> lấy Fleet. Nếu chọn Vùng -> lấy Active Internal
         capacity_cars = total_internal_fleet if sel_loc == "Tất cả" else active_internal_in_filter
         if capacity_cars == 0: capacity_cars = 1
         
@@ -328,22 +325,19 @@ if uploaded_file:
     # --- TABS ---
     t1, t2, t3, t4 = st.tabs(["📊 Phân Tích", "🏆 Bảng Xếp Hạng", "📉 Chất Lượng", "⚙️ Đối Soát & Kiểm Tra"])
     
-    chart_prefs = {} # Lưu cấu hình chart cho PPTX
+    chart_prefs = {} 
     kind_map = {"Thanh ngang (Bar)": "bar", "Thanh dọc (Column)": "column", "Tròn (Pie)": "pie"}
 
     with t1:
         c1, c2 = st.columns([2, 1])
         with c1:
             st.write("#### Phân bổ Loại Xe & Cấu trúc")
-            # Selectors
             chart_type_struct = st.selectbox("Kiểu biểu đồ Cấu trúc:", list(kind_map.keys()), index=0, key="c_struct")
             chart_prefs['structure'] = kind_map[chart_type_struct]
             
-            # Data
             if sel_comp == "Tất cả": df_g = df_filtered['Công ty'].value_counts().reset_index(); df_g.columns = ['Category', 'Value']; title_c = "Theo Công Ty"
             else: df_g = df_filtered['BU'].value_counts().reset_index(); df_g.columns = ['Category', 'Value']; title_c = f"Theo Phòng Ban ({sel_comp})"
             
-            # Chart Structure
             if chart_prefs['structure'] == "bar": fig = px.bar(df_g, x='Value', y='Category', orientation='h', text='Value', title=title_c)
             elif chart_prefs['structure'] == "column": fig = px.bar(df_g, x='Category', y='Value', text='Value', title=title_c)
             else: fig = px.pie(df_g, values='Value', names='Category', title=title_c)
@@ -364,46 +358,43 @@ if uploaded_file:
     with t2:
         c_u, c_d = st.columns(2)
         with c_u:
-            # Top User Chart Selector
             type_u = st.selectbox("Biểu đồ Top User:", list(kind_map.keys()), index=0, key="c_user")
             chart_prefs['top_user'] = kind_map[type_u]
-            
             top_u = df_filtered.groupby(['Người sử dụng xe', 'Công ty']).size().reset_index(name='Số chuyến').sort_values('Số chuyến', ascending=False).head(10)
             st.write("##### 🥇 Top User")
             
-            # Draw User Chart
             if chart_prefs['top_user'] == "bar": fig_u = px.bar(top_u, x='Số chuyến', y='Người sử dụng xe', orientation='h', text='Số chuyến', hover_data=['Công ty'])
             elif chart_prefs['top_user'] == "column": fig_u = px.bar(top_u, x='Người sử dụng xe', y='Số chuyến', text='Số chuyến')
             else: fig_u = px.pie(top_u, values='Số chuyến', names='Người sử dụng xe')
             st.plotly_chart(fig_u, use_container_width=True)
-            
             st.dataframe(top_u, use_container_width=True)
             
         with c_d:
-            # Top Driver Chart Selector
             type_d = st.selectbox("Biểu đồ Top Driver:", list(kind_map.keys()), index=0, key="c_driver")
             chart_prefs['top_driver'] = kind_map[type_d]
-            
             top_d = df_filtered.groupby(['Tên tài xế', 'Phân Loại Xe']).size().reset_index(name='Số chuyến').sort_values('Số chuyến', ascending=False).head(10)
             st.write("##### 🚘 Top Driver")
             
-            # Draw Driver Chart
             if chart_prefs['top_driver'] == "bar": fig_d = px.bar(top_d, x='Số chuyến', y='Tên tài xế', orientation='h', text='Số chuyến', hover_data=['Phân Loại Xe'])
             elif chart_prefs['top_driver'] == "column": fig_d = px.bar(top_d, x='Tên tài xế', y='Số chuyến', text='Số chuyến')
             else: fig_d = px.pie(top_d, values='Số chuyến', names='Tên tài xế')
             st.plotly_chart(fig_d, use_container_width=True)
-            
             st.dataframe(top_d, use_container_width=True)
 
     with t3:
         st.write("#### Chi tiết Hủy / Từ chối")
         bad = df_filtered[df_filtered['Tình trạng đơn yêu cầu'].isin(['CANCELED', 'CANCELLED', 'REJECTED_BY_ADMIN'])]
-        st.dataframe(bad[['Ngày khởi hành', 'Biển số xe', 'Phân Loại Xe', 'Lý do', 'Note']], use_container_width=True)
+        
+        # --- FIX LỖI KEY ERROR TẠI ĐÂY ---
+        # Chỉ lấy các cột CÓ THỰC trong dữ liệu
+        desired_cols = ['Ngày khởi hành', 'Biển số xe', 'Phân Loại Xe', 'Lý do', 'Note', 'Tình trạng đơn yêu cầu']
+        valid_cols = [c for c in desired_cols if c in bad.columns]
+        # ---------------------------------
+        
+        st.dataframe(bad[valid_cols], use_container_width=True)
 
     with t4:
         st.subheader("⚙️ Chi Tiết Đối Soát Dữ Liệu")
-        
-        # 1. Check Trùng
         with st.expander("🚨 Kiểm tra Trùng lặp trong danh sách Driver", expanded=True):
             if report_info['duplicates_list']:
                 st.error(f"Phát hiện {len(report_info['duplicates_list'])} biển số bị nhập trùng trong file Driver!")
@@ -411,13 +402,11 @@ if uploaded_file:
             else:
                 st.success("Dữ liệu Driver sạch, không có biển số trùng.")
 
-        # 2. Check Vãng lai
         with st.expander(f"🚗 Danh sách Xe Vãng Lai (Không có trong Driver Sheet)"):
             vang_lai = df_filtered[df_filtered['Phân Loại Xe'] == 'Xe Vãng lai']['Biển số xe'].unique()
             st.write(f"Tìm thấy **{len(vang_lai)}** xe vãng lai trong bộ lọc hiện tại:")
             st.table(pd.DataFrame(vang_lai, columns=['Biển số Vãng lai']))
 
-        # 3. Check Nội bộ
         with st.expander(f"🚙 Danh sách Xe Nội Bộ (Có trong Driver Sheet)"):
             noi_bo = df_filtered[df_filtered['Phân Loại Xe'] == 'Xe Nội bộ']['Biển số xe'].unique()
             st.write(f"Tìm thấy **{len(noi_bo)}** xe nội bộ hoạt động:")
