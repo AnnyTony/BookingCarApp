@@ -14,7 +14,7 @@ st.markdown("""
 <style>
     .block-container {padding-top: 1rem; padding-bottom: 3rem;}
     
-    /* KPI Card Style - Professional Look */
+    /* KPI Card Style */
     .kpi-card {
         background-color: white; border-radius: 8px; padding: 15px;
         box-shadow: 0 1px 3px rgba(0,0,0,0.1); border-left: 5px solid #0078d4;
@@ -31,8 +31,6 @@ st.markdown("""
         font-size: 11px; color: #888; font-style: italic; margin-top: 8px;
         border-top: 1px solid #eee; padding-top: 5px;
     }
-    .highlight-good { color: #107c10; }
-    .highlight-bad { color: #d13438; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -42,7 +40,6 @@ def load_data_final(file):
     try:
         xl = pd.ExcelFile(file, engine='openpyxl')
         
-        # Tìm sheet linh hoạt
         sheet_driver = next((s for s in xl.sheet_names if 'driver' in s.lower()), None)
         sheet_booking = next((s for s in xl.sheet_names if 'booking' in s.lower()), None)
         sheet_cbnv = next((s for s in xl.sheet_names if 'cbnv' in s.lower()), None)
@@ -71,9 +68,7 @@ def load_data_final(file):
             df_driver.columns = df_driver.columns.str.strip()
             if 'Biển số xe' in df_driver.columns:
                 df_driver = df_driver.drop_duplicates(subset=['Biển số xe'], keep='last')
-                # Merge để lấy tên tài xế
                 df_final = df_final.merge(df_driver[['Biển số xe', 'Tên tài xế']], on='Biển số xe', how='left', suffixes=('', '_D'))
-                # Ưu tiên lấy tên tài xế từ bảng Driver nếu bảng Booking rỗng
                 if 'Tên tài xế_D' in df_final.columns:
                     if 'Tên tài xế' not in df_final.columns:
                         df_final['Tên tài xế'] = df_final['Tên tài xế_D']
@@ -97,12 +92,16 @@ def load_data_final(file):
                 df_cbnv = df_cbnv.drop_duplicates(subset=['Full Name'], keep='first')
                 df_final = df_final.merge(df_cbnv, left_on='Người sử dụng xe', right_on='Full Name', how='left')
 
+        # --- FIX LỖI CRASH (QUAN TRỌNG): Đảm bảo các cột cần thiết luôn tồn tại ---
+        required_cols = ['Công ty', 'BU', 'Location', 'Tên tài xế', 'Lý do', 'Note', 'Tình trạng đơn yêu cầu']
+        for col in required_cols:
+            if col not in df_final.columns:
+                df_final[col] = "Unknown" if col in ['Công ty', 'BU', 'Location'] else ""
+
         # Fillna & Format
         for c in ['Công ty', 'BU', 'Location']:
-            if c not in df_final.columns: df_final[c] = 'Unknown'
-            else: df_final[c] = df_final[c].fillna('Unknown').astype(str)
+            df_final[c] = df_final[c].fillna('Unknown').astype(str)
         
-        if 'Tên tài xế' not in df_final.columns: df_final['Tên tài xế'] = 'Chưa cập nhật'
         df_final['Tên tài xế'] = df_final['Tên tài xế'].fillna('Chưa cập nhật')
 
         df_final['Start'] = pd.to_datetime(df_final['Ngày khởi hành'].astype(str) + ' ' + df_final['Giờ khởi hành'].astype(str), errors='coerce')
@@ -112,12 +111,6 @@ def load_data_final(file):
         df_final['Duration'] = (df_final['End'] - df_final['Start']).dt.total_seconds() / 3600
         df_final['Tháng'] = df_final['Start'].dt.strftime('%Y-%m')
         
-        # Scope
-        def check_scope(r):
-            s = str(r).lower()
-            return "Đi Tỉnh" if any(x in s for x in ['tỉnh', 'tp.', 'bình dương', 'đồng nai', 'vũng tàu', 'hà nội']) else "Nội thành"
-        df_final['Phạm Vi'] = df_final['Lộ trình'].apply(check_scope) if 'Lộ trình' in df_final.columns else 'Unknown'
-
         return df_final
     except Exception as e: return f"Lỗi: {str(e)}"
 
@@ -125,7 +118,6 @@ def load_data_final(file):
 def get_chart_img(data, x, y, kind='bar', title='', color='#0078d4'):
     plt.figure(figsize=(6, 4))
     if kind == 'bar':
-        # Sort data for better bar chart
         data = data.sort_values(by=x, ascending=True)
         plt.barh(data[y], data[x], color=color)
         plt.xlabel(x)
@@ -137,7 +129,7 @@ def get_chart_img(data, x, y, kind='bar', title='', color='#0078d4'):
     img = BytesIO(); plt.savefig(img, format='png', dpi=100); plt.close(); img.seek(0)
     return img
 
-# --- 4. HÀM XUẤT PPTX (TÙY BIẾN CAO) ---
+# --- 4. HÀM XUẤT PPTX ---
 def export_pptx(kpi, df_comp, df_status, top_users, top_drivers, df_bad_trips, selected_options):
     prs = Presentation()
     
@@ -146,10 +138,9 @@ def export_pptx(kpi, df_comp, df_status, top_users, top_drivers, df_bad_trips, s
         slide.shapes.title.text = title
         slide.placeholders[1].text = sub
     
-    # Slide 1: Luôn có
     add_title("BÁO CÁO VẬN HÀNH ĐỘI XE", f"Dữ liệu đến tháng: {kpi['last_month']}")
     
-    # Slide 2: KPI Tổng quan (Luôn có)
+    # KPI Slide
     slide = prs.slides.add_slide(prs.slide_layouts[1])
     slide.shapes.title.text = "TỔNG QUAN HIỆU SUẤT"
     tf = slide.shapes.placeholders[1].text_frame
@@ -159,31 +150,25 @@ def export_pptx(kpi, df_comp, df_status, top_users, top_drivers, df_bad_trips, s
     tf.add_paragraph().text = f"• Tỷ lệ Hoàn thành: {kpi['success_rate']:.1f}%"
     tf.add_paragraph().text = f"• Tỷ lệ Hủy/Từ chối: {kpi['cancel_rate'] + kpi['reject_rate']:.1f}%"
 
-    # TÙY CHỌN 1: Biểu đồ Tổng quan
     if "Biểu đồ Tổng quan" in selected_options:
         slide = prs.slides.add_slide(prs.slide_layouts[5])
         slide.shapes.title.text = "PHÂN BỔ THEO CÔNG TY & TRẠNG THÁI"
         img1 = get_chart_img(df_comp.head(8), 'Số chuyến', 'Công ty', 'bar', 'Top Công Ty')
         slide.shapes.add_picture(img1, Inches(0.5), Inches(2), Inches(4.5), Inches(3.5))
-        
         img2 = get_chart_img(df_status, 'Số lượng', 'Trạng thái', 'pie', 'Trạng Thái Đơn')
         slide.shapes.add_picture(img2, Inches(5.2), Inches(2), Inches(4.5), Inches(3.5))
 
-    # TÙY CHỌN 2: Top Xếp Hạng
     if "Bảng Xếp Hạng (Top User/Driver)" in selected_options:
-        # Slide Top User
         slide_u = prs.slides.add_slide(prs.slide_layouts[5])
         slide_u.shapes.title.text = "TOP 10 NGƯỜI SỬ DỤNG NHIỀU NHẤT"
         img_u = get_chart_img(top_users.sort_values('Chuyến', ascending=False).head(10), 'Chuyến', 'Tên', 'bar', '', '#8764b8')
         slide_u.shapes.add_picture(img_u, Inches(1.5), Inches(2), Inches(7), Inches(4.5))
         
-        # Slide Top Driver
         slide_d = prs.slides.add_slide(prs.slide_layouts[5])
         slide_d.shapes.title.text = "TOP 10 TÀI XẾ HOẠT ĐỘNG NHIỀU NHẤT"
         img_d = get_chart_img(top_drivers.sort_values('Chuyến', ascending=False).head(10), 'Chuyến', 'Tên', 'bar', '', '#00cc6a')
         slide_d.shapes.add_picture(img_d, Inches(1.5), Inches(2), Inches(7), Inches(4.5))
 
-    # TÙY CHỌN 3: Danh sách lỗi
     if "Danh sách Hủy/Từ chối" in selected_options:
         slide = prs.slides.add_slide(prs.slide_layouts[5])
         slide.shapes.title.text = "CHI TIẾT ĐƠN HỦY / TỪ CHỐI"
@@ -198,11 +183,16 @@ def export_pptx(kpi, df_comp, df_status, top_users, top_drivers, df_bad_trips, s
                 cell.fill.solid(); cell.fill.fore_color.rgb = RGBColor(0, 120, 212)
                 cell.text_frame.paragraphs[0].font.color.rgb = RGBColor(255, 255, 255)
             
+            # Safe access to attributes using getattr or fallback
             for i, row in enumerate(df_bad_trips.head(9).itertuples(), start=1):
                 table.cell(i, 0).text = str(row.Start_Str)
                 table.cell(i, 1).text = str(row.User)
                 table.cell(i, 2).text = str(row.Status)
-                table.cell(i, 3).text = str(row.Note) if str(row.Note) != 'nan' else ""
+                # Xử lý an toàn cho cột Note/Lý do
+                note_val = str(getattr(row, 'Note', ''))
+                reason_val = str(getattr(row, 'Lý do', ''))
+                final_note = note_val if note_val != 'nan' and note_val else reason_val
+                table.cell(i, 3).text = final_note.replace('nan', '')
         else:
             slide.shapes.add_textbox(Inches(1), Inches(2), Inches(5), Inches(1)).text_frame.text = "Không có dữ liệu."
 
@@ -242,7 +232,6 @@ if uploaded_file:
     
     days = max((df['Start'].max() - df['Start'].min()).days + 1, 1)
     
-    # Metrics
     total_trips = len(df)
     total_hours = df['Duration'].sum()
     occupancy = (total_hours / (total_cars * days * 9) * 100)
@@ -254,10 +243,8 @@ if uploaded_file:
     suc_rate = (completed / total_trips * 100) if total_trips > 0 else 0
     fail_rate = (canceled / total_trips * 100) if total_trips > 0 else 0
 
-    # --- HIỂN THỊ KPI CARDS (CÓ CÔNG THỨC) ---
+    # KPI UI
     cols = st.columns(5)
-    
-    # Định nghĩa dữ liệu thẻ để render vòng lặp cho gọn
     cards = [
         {"title": "Tổng Chuyến", "val": f"{total_trips}", "sub": "∑ Đếm số dòng", "color": "#0078d4"},
         {"title": "Giờ Vận Hành", "val": f"{total_hours:,.0f}", "sub": "∑ (Giờ về - Giờ đi)", "color": "#0078d4"},
@@ -292,10 +279,8 @@ if uploaded_file:
             st.plotly_chart(px.bar(by_comp.head(5), x='Số chuyến', y='Công ty', orientation='h'), use_container_width=True)
 
     with t2:
-        # TÍNH TOÁN TOP DATA
         top_user = df['Người sử dụng xe'].value_counts().reset_index()
         top_user.columns = ['Tên', 'Chuyến']
-        
         top_driver = df['Tên tài xế'].value_counts().reset_index()
         top_driver.columns = ['Tên', 'Chuyến']
 
@@ -311,11 +296,14 @@ if uploaded_file:
         bad_trips = df[df['Tình trạng đơn yêu cầu'].isin(['CANCELED', 'CANCELLED', 'REJECTED_BY_ADMIN'])].copy()
         if not bad_trips.empty:
             st.write(f"##### Danh sách {len(bad_trips)} chuyến bị Hủy/Từ chối")
-            st.dataframe(bad_trips[['Ngày khởi hành', 'Người sử dụng xe', 'Tên tài xế', 'Lý do', 'Note']], use_container_width=True)
+            # FIX LỖI: Chỉ chọn các cột thực sự tồn tại
+            target_cols = ['Ngày khởi hành', 'Người sử dụng xe', 'Tên tài xế', 'Lý do', 'Note']
+            valid_cols = [c for c in target_cols if c in bad_trips.columns]
+            st.dataframe(bad_trips[valid_cols], use_container_width=True)
         else:
             st.success("Không có chuyến nào bị hủy trong giai đoạn này.")
 
-    # --- KHU VỰC XUẤT BÁO CÁO (NÂNG CẤP) ---
+    # --- EXPORT ---
     st.divider()
     st.subheader("📥 Xuất Báo Cáo PowerPoint")
     
@@ -323,23 +311,21 @@ if uploaded_file:
     
     with c_opt:
         pptx_options = st.multiselect(
-            "Chọn nội dung muốn đưa vào Slide:",
+            "Chọn nội dung:",
             ["Biểu đồ Tổng quan", "Bảng Xếp Hạng (Top User/Driver)", "Danh sách Hủy/Từ chối"],
             default=["Biểu đồ Tổng quan", "Bảng Xếp Hạng (Top User/Driver)"]
         )
     
     with c_btn:
-        st.write("") # Spacer
+        st.write("") 
         st.write("") 
         
-        # Chuẩn bị data export
         kpi_data = {
             'trips': total_trips, 'hours': total_hours, 'occupancy': occupancy,
             'success_rate': suc_rate, 'cancel_rate': fail_rate, 'reject_rate': 0,
             'last_month': df['Tháng'].max() if not df.empty else "N/A"
         }
         
-        # Chuẩn bị bảng Hủy cho export (làm đẹp cột)
         df_bad_exp = pd.DataFrame()
         if not bad_trips.empty:
             df_bad_exp = bad_trips.copy()
@@ -353,16 +339,10 @@ if uploaded_file:
             top_user, 
             top_driver, 
             df_bad_exp,
-            pptx_options # Truyền options vào hàm
+            pptx_options
         )
         
-        st.download_button(
-            label="Tải file .PPTX ngay",
-            data=pptx_file,
-            file_name="Bao_Cao_Van_Hanh_Full.pptx",
-            mime="application/vnd.openxmlformats-officedocument.presentationml.presentation",
-            type="primary"
-        )
+        st.download_button("Tải file .PPTX ngay", pptx_file, "Bao_Cao_Van_Hanh_Full.pptx", "application/vnd.openxmlformats-officedocument.presentationml.presentation", type="primary")
 
 else:
     st.info("👋 Vui lòng upload file Excel dữ liệu.")
