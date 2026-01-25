@@ -26,6 +26,7 @@ st.markdown("""
         display: flex;
         flex-direction: column;
         justify-content: space-between;
+        min-height: 160px; /* Đảm bảo độ cao đồng đều */
     }
     
     .kpi-card:hover {
@@ -43,7 +44,7 @@ st.markdown("""
     .kpi-title {
         font-size: 14px;
         color: #6c757d;
-        font-weight: 600;
+        font-weight: 700;
         text-transform: uppercase;
         letter-spacing: 0.5px;
     }
@@ -59,14 +60,14 @@ st.markdown("""
         font-size: 32px;
         font-weight: 800;
         color: #212529;
-        margin: 5px 0;
+        margin: 0;
     }
 
     .kpi-formula {
-        font-size: 12px; /* Tăng size lên xíu cho dễ đọc */
-        color: #adb5bd;
+        font-size: 12px;
+        color: #888;
         font-style: italic;
-        margin-top: auto;
+        margin-top: auto; /* Đẩy xuống đáy */
         padding-top: 10px;
         border-top: 1px dashed #eee;
     }
@@ -77,8 +78,8 @@ st.markdown("""
         border-radius: 4px;
         height: 6px;
         width: 100%;
-        margin-top: 5px;
-        margin-bottom: 8px; /* Thêm khoảng cách với formula */
+        margin-top: 8px;
+        margin-bottom: 10px;
         overflow: hidden;
     }
     
@@ -322,7 +323,7 @@ if uploaded_file:
     suc_rate = (completed / total_trips * 100) if total_trips > 0 else 0
     fail_rate = (canceled / total_trips * 100) if total_trips > 0 else 0
 
-    # --- KPI UI (FIX HTML INDENTATION ERROR) ---
+    # --- KPI UI (SỬA LỖI HIỂN THỊ HTML) ---
     cols = st.columns(5)
     
     cards = [
@@ -334,15 +335,14 @@ if uploaded_file:
     ]
 
     for col, card in zip(cols, cards):
-        # Progress Bar Logic
-        progress_html = ""
+        # Progress logic
         if card["is_percent"]:
-            progress_html = f"""<div class="progress-bg"><div class="progress-fill" style="width: {card['pct_val']}%; background-color: {card['color']}"></div></div>"""
+            progress_html = f'<div class="progress-bg"><div class="progress-fill" style="width: {card["pct_val"]}%; background-color: {card["color"]}"></div></div>'
         else:
-            # IMPORTANT: For non-percent cards, use a spacer div to keep alignment but invisible
-            progress_html = """<div style="height: 19px;"></div>"""
+            # Tạo khoảng trắng ảo để các ô cao bằng nhau
+            progress_html = '<div style="height: 24px;"></div>' 
 
-        # IMPORTANT: Use a single f-string without indentation to prevent Markdown code block issues
+        # QUAN TRỌNG: Viết HTML sát lề trái, không thụt dòng trong string
         html_code = f"""<div class="kpi-card" style="border-top: 4px solid {card['color']}">
 <div class="kpi-header">
 <span class="kpi-title" style="color: {card['color']}">{card['title']}</span>
