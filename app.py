@@ -116,7 +116,7 @@ def load_data_final(file):
         return df_final
     except Exception as e: return f"Lỗi: {str(e)}"
 
-# --- 3. HÀM TẠO ẢNH CHO PPTX (NÂNG CẤP ĐA DẠNG BIỂU ĐỒ) ---
+# --- 3. HÀM TẠO ẢNH CHO PPTX ---
 def get_chart_img(data, x, y, kind='bar', title='', color='#0078d4'):
     plt.figure(figsize=(6, 4))
     
@@ -130,8 +130,7 @@ def get_chart_img(data, x, y, kind='bar', title='', color='#0078d4'):
         plt.barh(data[y], data[x], color=color)
         plt.xlabel(x)
     elif kind == 'column': # Thanh dọc
-        # Với thanh dọc, x là Categories, y là Values
-        plt.bar(data[y], data[x], color=color) # Matplotlib bar: x=cate, height=val
+        plt.bar(data[y], data[x], color=color)
         plt.ylabel(x)
         plt.xticks(rotation=45, ha='right')
     elif kind == 'pie': # Tròn
@@ -142,8 +141,8 @@ def get_chart_img(data, x, y, kind='bar', title='', color='#0078d4'):
     img = BytesIO(); plt.savefig(img, format='png', dpi=100); plt.close(); img.seek(0)
     return img
 
-# --- 4. HÀM XUẤT PPTX (CÓ THAM SỐ LOẠI BIỂU ĐỒ) ---
-def export_pptx(kpi, df_comp, df_status, top_users, top_drivers, df_bad_trips, selected_options, chart_prefs):
+# --- 4. HÀM XUẤT PPTX ---
+def export_pptx(kpi, df_comp, df_status, top_users, top_drivers, df_bad_trips, selected_options, chart_prefs, df_scope):
     prs = Presentation()
     
     def add_title(title, sub):
@@ -153,7 +152,7 @@ def export_pptx(kpi, df_comp, df_status, top_users, top_drivers, df_bad_trips, s
     
     add_title("BÁO CÁO VẬN HÀNH ĐỘI XE", f"Dữ liệu đến tháng: {kpi['last_month']}")
     
-    # KPI Slide
+    # KPI
     slide = prs.slides.add_slide(prs.slide_layouts[1])
     slide.shapes.title.text = "TỔNG QUAN HIỆU SUẤT"
     tf = slide.shapes.placeholders[1].text_frame
@@ -163,38 +162,38 @@ def export_pptx(kpi, df_comp, df_status, top_users, top_drivers, df_bad_trips, s
     tf.add_paragraph().text = f"• Tỷ lệ Hoàn thành: {kpi['success_rate']:.1f}%"
     tf.add_paragraph().text = f"• Tỷ lệ Hủy/Từ chối: {kpi['cancel_rate'] + kpi['reject_rate']:.1f}%"
 
+    # Slide Tổng quan
     if "Biểu đồ Tổng quan" in selected_options:
         slide = prs.slides.add_slide(prs.slide_layouts[5])
-        slide.shapes.title.text = "PHÂN BỔ THEO CÔNG TY & TRẠNG THÁI"
+        slide.shapes.title.text = "PHÂN BỔ VÀ CẤU TRÚC"
         
-        # Lấy loại biểu đồ từ preferences
-        kind_struct = chart_prefs.get('structure', 'bar') # Mặc định bar
-        kind_status = chart_prefs.get('status', 'pie')    # Mặc định pie
-
-        img1 = get_chart_img(df_comp.head(8), 'Số chuyến', 'Công ty', kind=kind_struct, title='Top Công Ty')
+        img1 = get_chart_img(df_comp.head(8), 'Value', 'Category', kind=chart_prefs.get('structure', 'bar'), title='Cấu Trúc Sử Dụng')
         slide.shapes.add_picture(img1, Inches(0.5), Inches(2), Inches(4.5), Inches(3.5))
         
-        img2 = get_chart_img(df_status, 'Số lượng', 'Trạng thái', kind=kind_status, title='Trạng Thái Đơn')
+        # Thêm biểu đồ Scope vào slide này
+        img2 = get_chart_img(df_scope, 'Số lượng', 'Phạm vi', kind=chart_prefs.get('scope', 'pie'), title='Phạm Vi Di Chuyển')
         slide.shapes.add_picture(img2, Inches(5.2), Inches(2), Inches(4.5), Inches(3.5))
 
+    # Slide Top User
     if "Bảng Xếp Hạng (Top User/Driver)" in selected_options:
         slide_u = prs.slides.add_slide(prs.slide_layouts[5])
         slide_u.shapes.title.text = "TOP 10 NGƯỜI SỬ DỤNG NHIỀU NHẤT"
-        img_u = get_chart_img(top_users.sort_values('Chuyến', ascending=False).head(10), 'Chuyến', 'Tên', 'bar', '', '#8764b8')
+        # Với Top User, ta vẽ chart dựa trên Total chuyến, nhưng trong PPTX ta hiển thị đơn giản
+        img_u = get_chart_img(top_users.head(10), 'Số chuyến', 'Người sử dụng xe', kind=chart_prefs.get('top_user', 'bar'), title='Top User', color='#8764b8')
         slide_u.shapes.add_picture(img_u, Inches(1.5), Inches(2), Inches(7), Inches(4.5))
         
         slide_d = prs.slides.add_slide(prs.slide_layouts[5])
         slide_d.shapes.title.text = "TOP 10 TÀI XẾ HOẠT ĐỘNG NHIỀU NHẤT"
-        img_d = get_chart_img(top_drivers.sort_values('Chuyến', ascending=False).head(10), 'Chuyến', 'Tên', 'bar', '', '#00cc6a')
+        img_d = get_chart_img(top_drivers.head(10), 'Số chuyến', 'Tên tài xế', kind=chart_prefs.get('top_driver', 'bar'), title='Top Driver', color='#00cc6a')
         slide_d.shapes.add_picture(img_d, Inches(1.5), Inches(2), Inches(7), Inches(4.5))
 
+    # Slide Bad Trips
     if "Danh sách Hủy/Từ chối" in selected_options:
         slide = prs.slides.add_slide(prs.slide_layouts[5])
         slide.shapes.title.text = "CHI TIẾT ĐƠN HỦY / TỪ CHỐI"
         if not df_bad_trips.empty:
             wanted_cols = ['Start_Str', 'User', 'Status', 'Note']
             avail_cols = [c for c in wanted_cols if c in df_bad_trips.columns]
-            
             rows, cols = min(len(df_bad_trips)+1, 10), len(avail_cols)
             if cols > 0:
                 table = slide.shapes.add_table(rows, cols, Inches(0.5), Inches(1.5), Inches(9), Inches(0.8)).table
@@ -223,7 +222,6 @@ if uploaded_file:
     # --- SIDEBAR FILTERS ---
     with st.sidebar:
         st.header("🗂️ Bộ Lọc Dữ Liệu")
-        
         min_date, max_date = df['Start'].min().date(), df['Start'].max().date()
         date_range = st.date_input("Thời gian:", (min_date, max_date), min_value=min_date, max_value=max_date)
         if len(date_range) == 2:
@@ -288,104 +286,101 @@ if uploaded_file:
         """, unsafe_allow_html=True)
 
     # --- MAIN TABS ---
-    t1, t2, t3 = st.tabs(["📊 Phân Tích Đơn Vị", "🏆 Bảng Xếp Hạng (Top)", "📉 Chất Lượng Vận Hành"])
+    t1, t2, t3 = st.tabs(["📊 Phân Tích Đơn Vị", "🏆 Bảng Xếp Hạng (Chi tiết)", "📉 Chất Lượng Vận Hành"])
     
-    # Biến lưu cấu hình chart để dùng cho PPTX
-    chart_prefs = {'structure': 'bar', 'status': 'pie'}
+    chart_prefs = {} # Store user prefs for PPTX
+    kind_map = {"Thanh ngang (Bar)": "bar", "Thanh dọc (Column)": "column", "Tròn (Pie)": "pie"}
 
     with t1:
         c1, c2 = st.columns([2, 1])
         with c1:
-            # --- [NEW] TÙY CHỌN LOẠI CHART ---
-            chart_type_struct = st.selectbox(
-                "Chọn loại biểu đồ Cấu trúc:", 
-                ["Thanh ngang (Bar)", "Thanh dọc (Column)", "Tròn (Pie)"], 
-                index=0, key="chart_struct"
-            )
-            
-            # Mapping lựa chọn sang kind
-            kind_map = {"Thanh ngang (Bar)": "bar", "Thanh dọc (Column)": "column", "Tròn (Pie)": "pie"}
-            selected_kind = kind_map[chart_type_struct]
-            chart_prefs['structure'] = selected_kind # Lưu cấu hình
+            # Selector 1: Structure Chart
+            chart_type_struct = st.selectbox("Kiểu biểu đồ Cấu trúc:", list(kind_map.keys()), index=0, key="c_struct")
+            kind_struct = kind_map[chart_type_struct]
+            chart_prefs['structure'] = kind_struct
 
-            st.write("#### Phân tích theo Cấu trúc")
-            
-            # Chuẩn bị dữ liệu vẽ chart
             if sel_comp == "Tất cả":
-                df_g = df_filtered['Công ty'].value_counts().reset_index()
-                df_g.columns = ['Category', 'Value']
-                title_chart = "Theo Công Ty"
+                df_g = df_filtered['Công ty'].value_counts().reset_index(); df_g.columns = ['Category', 'Value']; title_c = "Theo Công Ty"
             elif sel_bu == "Tất cả":
-                df_g = df_filtered['BU'].value_counts().reset_index()
-                df_g.columns = ['Category', 'Value']
-                title_chart = f"Theo Phòng Ban ({sel_comp})"
+                df_g = df_filtered['BU'].value_counts().reset_index(); df_g.columns = ['Category', 'Value']; title_c = f"Theo Phòng Ban ({sel_comp})"
             else:
-                df_g = df_filtered['Người sử dụng xe'].value_counts().head(10).reset_index()
-                df_g.columns = ['Category', 'Value']
-                title_chart = f"Top NV ({sel_bu})"
+                df_g = df_filtered['Người sử dụng xe'].value_counts().head(10).reset_index(); df_g.columns = ['Category', 'Value']; title_c = f"Top NV ({sel_bu})"
             
-            # VẼ CHART THEO LỰA CHỌN
-            if selected_kind == "bar":
-                fig = px.bar(df_g, x='Value', y='Category', orientation='h', text='Value', title=title_chart)
-                fig.update_traces(textposition='outside')
-            elif selected_kind == "column":
-                fig = px.bar(df_g, x='Category', y='Value', text='Value', title=title_chart)
-                fig.update_traces(textposition='outside')
-            else: # pie
-                fig = px.pie(df_g, values='Value', names='Category', title=title_chart)
-            
+            if kind_struct == "bar": fig = px.bar(df_g, x='Value', y='Category', orientation='h', text='Value', title=title_c)
+            elif kind_struct == "column": fig = px.bar(df_g, x='Category', y='Value', text='Value', title=title_c)
+            else: fig = px.pie(df_g, values='Value', names='Category', title=title_c)
             st.plotly_chart(fig, use_container_width=True)
         
         with c2:
-            st.write("#### Phạm vi di chuyển")
+            # Selector 2: Scope Chart
+            chart_type_scope = st.selectbox("Kiểu biểu đồ Phạm vi:", list(kind_map.keys()), index=2, key="c_scope")
+            kind_scope = kind_map[chart_type_scope]
+            chart_prefs['scope'] = kind_scope
+
             if 'Phạm Vi' in df_filtered.columns:
                 df_sc = df_filtered['Phạm Vi'].value_counts().reset_index()
                 df_sc.columns = ['Phạm vi', 'Số lượng']
-                st.plotly_chart(px.pie(df_sc, values='Số lượng', names='Phạm vi', hole=0.5), use_container_width=True)
+                
+                if kind_scope == "bar": fig_s = px.bar(df_sc, x='Số lượng', y='Phạm vi', orientation='h', text='Số lượng', title="Phạm Vi Di Chuyển")
+                elif kind_scope == "column": fig_s = px.bar(df_sc, x='Phạm vi', y='Số lượng', text='Số lượng', title="Phạm Vi Di Chuyển")
+                else: fig_s = px.pie(df_sc, values='Số lượng', names='Phạm vi', hole=0.5, title="Phạm Vi Di Chuyển")
+                st.plotly_chart(fig_s, use_container_width=True)
 
     with t2:
-        top_user = df_filtered['Người sử dụng xe'].value_counts().reset_index()
-        top_user.columns = ['Tên', 'Chuyến']
+        # XỬ LÝ DỮ LIỆU NÂNG CAO CHO TAB 2
+        # 1. Top User Enhanced: Thêm cột Công ty
+        # Group by User và lấy Công ty (Mode)
+        df_user_stats = df_filtered.groupby('Người sử dụng xe').agg(
+            Số_chuyến=('Start', 'count'),
+            Công_ty=('Công ty', lambda x: x.mode()[0] if not x.mode().empty else 'Unknown')
+        ).reset_index().sort_values('Số_chuyến', ascending=False)
         
-        top_driver = df_filtered['Tên tài xế'].value_counts().reset_index()
-        top_driver.columns = ['Tên', 'Chuyến']
+        # 2. Top Driver Enhanced: Thêm cột Tuyến đường phổ biến
+        # Hàm tìm Route phổ biến nhất
+        def get_top_route(series):
+            if series.empty: return "N/A"
+            m = series.mode()
+            return m[0] if not m.empty else series.iloc[0]
+
+        df_driver_stats = df_filtered.groupby('Tên tài xế').agg(
+            Số_chuyến=('Start', 'count'),
+            Tuyến_hay_chạy=('Lộ trình', get_top_route)
+        ).reset_index().sort_values('Số_chuyến', ascending=False)
 
         c_u, c_d = st.columns(2)
         with c_u:
-            st.write("##### 🥇 Top 10 Người dùng")
-            st.dataframe(top_user.head(10), use_container_width=True, hide_index=True)
+            # Selector 3: Top User Chart
+            type_u = st.selectbox("Biểu đồ Top User:", list(kind_map.keys()), index=0, key="c_user")
+            chart_prefs['top_user'] = kind_map[type_u]
+            
+            st.write("##### 🥇 Top User (Kèm Công ty)")
+            st.dataframe(df_user_stats.head(10), use_container_width=True, hide_index=True)
+
         with c_d:
-            st.write("##### 🚘 Top 10 Tài xế")
-            st.dataframe(top_driver.head(10), use_container_width=True, hide_index=True)
+            # Selector 4: Top Driver Chart
+            type_d = st.selectbox("Biểu đồ Top Driver:", list(kind_map.keys()), index=0, key="c_driver")
+            chart_prefs['top_driver'] = kind_map[type_d]
+            
+            st.write("##### 🚘 Top Driver (Kèm Tuyến phổ biến)")
+            st.dataframe(df_driver_stats.head(10), use_container_width=True, hide_index=True)
 
     with t3:
         c_status_left, c_status_right = st.columns(2)
-        
         with c_status_left:
-             # --- [NEW] TÙY CHỌN LOẠI CHART STATUS ---
-            chart_type_status = st.selectbox(
-                "Chọn loại biểu đồ Trạng thái:", 
-                ["Tròn (Pie)", "Thanh ngang (Bar)", "Thanh dọc (Column)"], 
-                index=0, key="chart_status"
-            )
-            selected_kind_st = kind_map[chart_type_status]
-            chart_prefs['status'] = selected_kind_st # Lưu cấu hình
+             # Selector 5: Status Chart
+            chart_type_status = st.selectbox("Kiểu biểu đồ Trạng thái:", list(kind_map.keys()), index=2, key="c_status")
+            kind_st = kind_map[chart_type_status]
+            chart_prefs['status'] = kind_st
 
             st.write("#### Tỷ lệ Trạng thái")
-            df_st = counts.reset_index()
-            df_st.columns = ['Status', 'Count']
+            df_st = counts.reset_index(); df_st.columns = ['Status', 'Count']
             
-            # Vẽ Chart Status
-            if selected_kind_st == "pie":
-                fig_st = px.pie(df_st, values='Count', names='Status', hole=0.4, 
-                                 color='Status',
+            if kind_st == "pie":
+                fig_st = px.pie(df_st, values='Count', names='Status', hole=0.4, color='Status',
                                  color_discrete_map={'CLOSED':'#107c10', 'CANCELED':'#d13438', 'REJECTED_BY_ADMIN':'#a80000'})
                 fig_st.update_traces(textinfo='percent+label')
-            elif selected_kind_st == "bar":
-                 fig_st = px.bar(df_st, x='Count', y='Status', orientation='h', text='Count', color='Status')
-            else:
-                 fig_st = px.bar(df_st, x='Status', y='Count', text='Count', color='Status')
-
+            elif kind_st == "bar": fig_st = px.bar(df_st, x='Count', y='Status', orientation='h', text='Count', color='Status')
+            else: fig_st = px.bar(df_st, x='Status', y='Count', text='Count', color='Status')
             st.plotly_chart(fig_st, use_container_width=True)
 
         with c_status_right:
@@ -417,8 +412,7 @@ if uploaded_file:
         try:
             if not df.empty and 'Tháng' in df.columns:
                 valid_months = df['Tháng'].dropna()
-                if not valid_months.empty:
-                    last_month_str = valid_months.max()
+                if not valid_months.empty: last_month_str = valid_months.max()
         except: pass
 
         kpi_data = {
@@ -427,17 +421,31 @@ if uploaded_file:
             'last_month': last_month_str
         }
         
+        # Prepare Data for Export
         df_status_exp = counts.reset_index(); df_status_exp.columns = ['Trạng thái', 'Số lượng']
-        df_comp_exp = df_filtered['Công ty'].value_counts().reset_index(); df_comp_exp.columns = ['Công ty', 'Số chuyến']
+        
+        # Logic Chart 1 (Structure)
+        if sel_comp == "Tất cả": 
+            df_comp_exp = df_filtered['Công ty'].value_counts().reset_index(); df_comp_exp.columns=['Category', 'Value']
+        elif sel_bu == "Tất cả":
+            df_comp_exp = df_filtered['BU'].value_counts().reset_index(); df_comp_exp.columns=['Category', 'Value']
+        else:
+            df_comp_exp = df_filtered['Người sử dụng xe'].value_counts().head(10).reset_index(); df_comp_exp.columns=['Category', 'Value']
 
+        # Scope Data
+        if 'Phạm Vi' in df_filtered.columns:
+            df_scope_exp = df_filtered['Phạm Vi'].value_counts().reset_index()
+            df_scope_exp.columns = ['Phạm vi', 'Số lượng']
+        else: df_scope_exp = pd.DataFrame(columns=['Phạm vi', 'Số lượng'])
+
+        # Bad Trips
         df_bad_exp = pd.DataFrame()
         if not bad_trips.empty:
             df_bad_exp = bad_trips.copy()
             df_bad_exp['Start_Str'] = df_bad_exp['Start'].dt.strftime('%d/%m')
             df_bad_exp = df_bad_exp.rename(columns={'Người sử dụng xe': 'User', 'Tình trạng đơn yêu cầu': 'Status'})
 
-        # TRUYỀN THÊM chart_prefs VÀO HÀM EXPORT
-        pptx_file = export_pptx(kpi_data, df_comp_exp, df_status_exp, top_user, top_driver, df_bad_exp, pptx_options, chart_prefs)
+        pptx_file = export_pptx(kpi_data, df_comp_exp, df_status_exp, df_user_stats, df_driver_stats, df_bad_exp, pptx_options, chart_prefs, df_scope_exp)
         
         st.download_button(
             label="Tải file .PPTX ngay",
