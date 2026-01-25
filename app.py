@@ -170,7 +170,7 @@ def export_pptx(kpi, df_comp, df_status, top_users, top_drivers, df_bad_trips, s
         img1 = get_chart_img(df_comp.head(8), 'Value', 'Category', kind=chart_prefs.get('structure', 'bar'), title='Cấu Trúc Sử Dụng')
         slide.shapes.add_picture(img1, Inches(0.5), Inches(2), Inches(4.5), Inches(3.5))
         
-        # Thêm biểu đồ Scope vào slide này
+        # Thêm biểu đồ Scope
         img2 = get_chart_img(df_scope, 'Số lượng', 'Phạm vi', kind=chart_prefs.get('scope', 'pie'), title='Phạm Vi Di Chuyển')
         slide.shapes.add_picture(img2, Inches(5.2), Inches(2), Inches(4.5), Inches(3.5))
 
@@ -178,13 +178,12 @@ def export_pptx(kpi, df_comp, df_status, top_users, top_drivers, df_bad_trips, s
     if "Bảng Xếp Hạng (Top User/Driver)" in selected_options:
         slide_u = prs.slides.add_slide(prs.slide_layouts[5])
         slide_u.shapes.title.text = "TOP 10 NGƯỜI SỬ DỤNG NHIỀU NHẤT"
-        # Với Top User, ta vẽ chart dựa trên Total chuyến, nhưng trong PPTX ta hiển thị đơn giản
-        img_u = get_chart_img(top_users.head(10), 'Số chuyến', 'Người sử dụng xe', kind=chart_prefs.get('top_user', 'bar'), title='Top User', color='#8764b8')
+        img_u = get_chart_img(top_users.head(10), 'Số_chuyến', 'Người sử dụng xe', kind=chart_prefs.get('top_user', 'bar'), title='Top User', color='#8764b8')
         slide_u.shapes.add_picture(img_u, Inches(1.5), Inches(2), Inches(7), Inches(4.5))
         
         slide_d = prs.slides.add_slide(prs.slide_layouts[5])
         slide_d.shapes.title.text = "TOP 10 TÀI XẾ HOẠT ĐỘNG NHIỀU NHẤT"
-        img_d = get_chart_img(top_drivers.head(10), 'Số chuyến', 'Tên tài xế', kind=chart_prefs.get('top_driver', 'bar'), title='Top Driver', color='#00cc6a')
+        img_d = get_chart_img(top_drivers.head(10), 'Số_chuyến', 'Tên tài xế', kind=chart_prefs.get('top_driver', 'bar'), title='Top Driver', color='#00cc6a')
         slide_d.shapes.add_picture(img_d, Inches(1.5), Inches(2), Inches(7), Inches(4.5))
 
     # Slide Bad Trips
@@ -328,15 +327,11 @@ if uploaded_file:
 
     with t2:
         # XỬ LÝ DỮ LIỆU NÂNG CAO CHO TAB 2
-        # 1. Top User Enhanced: Thêm cột Công ty
-        # Group by User và lấy Công ty (Mode)
         df_user_stats = df_filtered.groupby('Người sử dụng xe').agg(
             Số_chuyến=('Start', 'count'),
             Công_ty=('Công ty', lambda x: x.mode()[0] if not x.mode().empty else 'Unknown')
         ).reset_index().sort_values('Số_chuyến', ascending=False)
         
-        # 2. Top Driver Enhanced: Thêm cột Tuyến đường phổ biến
-        # Hàm tìm Route phổ biến nhất
         def get_top_route(series):
             if series.empty: return "N/A"
             m = series.mode()
@@ -351,17 +346,43 @@ if uploaded_file:
         with c_u:
             # Selector 3: Top User Chart
             type_u = st.selectbox("Biểu đồ Top User:", list(kind_map.keys()), index=0, key="c_user")
-            chart_prefs['top_user'] = kind_map[type_u]
+            kind_u = kind_map[type_u]
+            chart_prefs['top_user'] = kind_u
             
             st.write("##### 🥇 Top User (Kèm Công ty)")
+            
+            # --- [ĐÃ SỬA] THÊM LỆNH VẼ BIỂU ĐỒ VÀO ĐÂY ---
+            if kind_u == "bar": 
+                fig_u = px.bar(df_user_stats.head(10), x='Số_chuyến', y='Người sử dụng xe', orientation='h', text='Số_chuyến', hover_data=['Công_ty'], color_discrete_sequence=['#8764b8'])
+            elif kind_u == "column": 
+                fig_u = px.bar(df_user_stats.head(10), x='Người sử dụng xe', y='Số_chuyến', text='Số_chuyến', hover_data=['Công_ty'], color_discrete_sequence=['#8764b8'])
+            else: 
+                fig_u = px.pie(df_user_stats.head(10), values='Số_chuyến', names='Người sử dụng xe', hover_data=['Công_ty'])
+            
+            st.plotly_chart(fig_u, use_container_width=True)
+            # ----------------------------------------------
+            
             st.dataframe(df_user_stats.head(10), use_container_width=True, hide_index=True)
 
         with c_d:
             # Selector 4: Top Driver Chart
             type_d = st.selectbox("Biểu đồ Top Driver:", list(kind_map.keys()), index=0, key="c_driver")
-            chart_prefs['top_driver'] = kind_map[type_d]
+            kind_d = kind_map[type_d]
+            chart_prefs['top_driver'] = kind_d
             
             st.write("##### 🚘 Top Driver (Kèm Tuyến phổ biến)")
+            
+            # --- [ĐÃ SỬA] THÊM LỆNH VẼ BIỂU ĐỒ VÀO ĐÂY ---
+            if kind_d == "bar": 
+                fig_d = px.bar(df_driver_stats.head(10), x='Số_chuyến', y='Tên tài xế', orientation='h', text='Số_chuyến', hover_data=['Tuyến_hay_chạy'], color_discrete_sequence=['#00cc6a'])
+            elif kind_d == "column": 
+                fig_d = px.bar(df_driver_stats.head(10), x='Tên tài xế', y='Số_chuyến', text='Số_chuyến', hover_data=['Tuyến_hay_chạy'], color_discrete_sequence=['#00cc6a'])
+            else: 
+                fig_d = px.pie(df_driver_stats.head(10), values='Số_chuyến', names='Tên tài xế', hover_data=['Tuyến_hay_chạy'])
+            
+            st.plotly_chart(fig_d, use_container_width=True)
+            # ----------------------------------------------
+
             st.dataframe(df_driver_stats.head(10), use_container_width=True, hide_index=True)
 
     with t3:
