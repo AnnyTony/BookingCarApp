@@ -120,7 +120,6 @@ def load_data_final(file):
 def get_chart_img(data, x, y, kind='bar', title='', color='#0078d4'):
     plt.figure(figsize=(6, 4))
     
-    # Kiểm tra an toàn: Đảm bảo cột tồn tại
     if x not in data.columns or y not in data.columns:
         plt.text(0.5, 0.5, 'Data Error', ha='center')
         img = BytesIO(); plt.savefig(img, format='png'); plt.close(); img.seek(0)
@@ -149,7 +148,6 @@ def export_pptx(kpi, df_comp, df_status, top_users, top_drivers, df_bad_trips, s
     
     add_title("BÁO CÁO VẬN HÀNH ĐỘI XE", f"Dữ liệu đến tháng: {kpi['last_month']}")
     
-    # KPI Slide
     slide = prs.slides.add_slide(prs.slide_layouts[1])
     slide.shapes.title.text = "TỔNG QUAN HIỆU SUẤT"
     tf = slide.shapes.placeholders[1].text_frame
@@ -212,7 +210,7 @@ if uploaded_file:
     df = load_data_final(uploaded_file)
     if isinstance(df, str): st.error(df); st.stop()
     
-    # --- [ĐÃ KHÔI PHỤC] SIDEBAR FILTERS ---
+    # --- SIDEBAR FILTERS (FULL VERSION) ---
     with st.sidebar:
         st.header("🗂️ Bộ Lọc Dữ Liệu")
         
@@ -226,7 +224,7 @@ if uploaded_file:
             
         st.markdown("---")
         
-        # 2. Hierarchy Filter (ĐÃ KHÔI PHỤC)
+        # 2. Hierarchy Filter
         st.caption("Lọc theo tổ chức (Drill-down):")
         
         # Level 1
@@ -288,7 +286,6 @@ if uploaded_file:
     t1, t2, t3 = st.tabs(["📊 Phân Tích Đơn Vị", "🏆 Bảng Xếp Hạng (Top)", "📉 Chi Tiết Chất Lượng"])
     
     with t1:
-        # [ĐÃ KHÔI PHỤC] Logic hiển thị thông minh theo cấp độ lọc
         c1, c2 = st.columns([2, 1])
         with c1:
             st.write("#### Phân tích theo Cấu trúc")
@@ -352,10 +349,19 @@ if uploaded_file:
         st.write("") 
         st.write("") 
         
+        # --- FIX LỖI TYPE ERROR KHI TÍNH THÁNG MAX ---
+        last_month_str = "N/A"
+        try:
+            if not df.empty and 'Tháng' in df.columns:
+                valid_months = df['Tháng'].dropna()
+                if not valid_months.empty:
+                    last_month_str = valid_months.max()
+        except: pass
+
         kpi_data = {
             'trips': total_trips, 'hours': total_hours, 'occupancy': occupancy,
             'success_rate': suc_rate, 'cancel_rate': fail_rate, 'reject_rate': 0,
-            'last_month': df['Tháng'].max() if not df.empty else "N/A"
+            'last_month': last_month_str # Sử dụng biến an toàn đã tính ở trên
         }
         
         df_status_exp = counts.reset_index(); df_status_exp.columns = ['Trạng thái', 'Số lượng']
