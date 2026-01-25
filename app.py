@@ -162,8 +162,6 @@ def load_data_final(file):
 # --- 3. HÀM TẠO ẢNH CHO PPTX ---
 def get_chart_img(data, x, y, kind='bar', title='', color='#0078d4'):
     plt.figure(figsize=(7, 4.5))
-    
-    # Check safe columns for plotting
     if x not in data.columns or y not in data.columns:
         plt.text(0.5, 0.5, 'No Data', ha='center'); img = BytesIO(); plt.savefig(img, format='png'); plt.close(); img.seek(0); return img
     
@@ -179,8 +177,8 @@ def get_chart_img(data, x, y, kind='bar', title='', color='#0078d4'):
     img = BytesIO(); plt.savefig(img, format='png', dpi=120); plt.close(); img.seek(0)
     return img
 
-# --- 4. EXPORT PPTX ---
-def export_pptx(kpi, df_comp, df_status, top_users, top_drivers, df_bad_trips, chart_prefs, df_scope):
+# --- 4. EXPORT PPTX (ĐÃ SỬA LỖI ARGUMENT) ---
+def export_pptx(kpi, df_comp, df_status, top_users, top_drivers, df_bad_trips, selected_options, chart_prefs, df_scope):
     prs = Presentation()
     
     def add_kpi_shape(slide, left, top, width, height, title, value, sub, color_rgb):
@@ -231,8 +229,7 @@ def export_pptx(kpi, df_comp, df_status, top_users, top_drivers, df_bad_trips, c
     # Slide 5: Bad Trips
     if not df_bad_trips.empty:
         slide = prs.slides.add_slide(prs.slide_layouts[5]); slide.shapes.title.text = "CHI TIẾT ĐƠN HỦY / TỪ CHỐI"
-        
-        # --- SAFE COLUMN SELECTION FOR PPTX ---
+        # --- SAFE COLUMNS (Đã thêm 'Lý do' và 'Note') ---
         wanted_cols = ['Start_Str', 'User', 'Status', 'Note', 'Lý do']
         avail_cols = [c for c in wanted_cols if c in df_bad_trips.columns]
         
