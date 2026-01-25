@@ -6,7 +6,6 @@ from io import BytesIO
 from pptx import Presentation
 from pptx.util import Inches, Pt
 from pptx.dml.color import RGBColor
-from pptx.enum.text import PP_ALIGN
 
 # --- 1. CẤU HÌNH TRANG & CSS ---
 st.set_page_config(page_title="Hệ Thống Quản Trị & Tối Ưu Hóa Đội Xe", page_icon="🚘", layout="wide")
@@ -92,7 +91,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# --- 2. HÀM XỬ LÝ DỮ LIỆU ---
+# --- 2. HÀM XỬ LÝ DỮ LIỆU (ĐÃ SỬA LOGIC) ---
 @st.cache_data
 def load_data_final(file):
     try:
@@ -120,11 +119,16 @@ def load_data_final(file):
 
         df_bk.columns = df_bk.columns.str.strip()
         
-        # Merge Driver
+        # Merge Driver & Clean
         df_final = df_bk
+        total_unique_cars = 0 # Biến đếm số xe
+        
         if not df_driver.empty:
             df_driver.columns = df_driver.columns.str.strip()
             if 'Biển số xe' in df_driver.columns:
+                # Đếm số xe thực tế từ danh sách Driver
+                total_unique_cars = df_driver['Biển số xe'].dropna().nunique()
+                
                 df_driver = df_driver.drop_duplicates(subset=['Biển số xe'], keep='last')
                 df_final = df_final.merge(df_driver[['Biển số xe', 'Tên tài xế']], on='Biển số xe', how='left', suffixes=('', '_D'))
                 if 'Tên tài xế_D' in df_final.columns:
@@ -132,6 +136,10 @@ def load_data_final(file):
                         df_final['Tên tài xế'] = df_final['Tên tài xế_D']
                     else:
                         df_final['Tên tài xế'] = df_final['Tên tài xế'].fillna(df_final['Tên tài xế_D'])
+
+        # Nếu không có sheet Driver hoặc không đếm được, đếm từ lịch sử chuyến
+        if total_unique_cars == 0 and 'Biển số xe' in df_final.columns:
+             total_unique_cars = df_final['Biển số xe'].dropna().nunique()
 
         # Merge CBNV
         if not df_cbnv.empty:
@@ -150,7 +158,7 @@ def load_data_final(file):
                 df_cbnv = df_cbnv.drop_duplicates(subset=['Full Name'], keep='first')
                 df_final = df_final.merge(df_cbnv, left_on='Người sử dụng xe', right_on='Full Name', how='left')
 
-        # Fillna & Format
+        # Fillna
         for c in ['Công ty', 'BU', 'Location']:
             if c not in df_final.columns: df_final[c] = 'Unknown'
             else: df_final[c] = df_final[c].fillna('Unknown').astype(str)
@@ -158,6 +166,7 @@ def load_data_final(file):
         if 'Tên tài xế' not in df_final.columns: df_final['Tên tài xế'] = 'Chưa cập nhật'
         df_final['Tên tài xế'] = df_final['Tên tài xế'].fillna('Chưa cập nhật')
 
+        # Xử lý thời gian
         df_final['Start'] = pd.to_datetime(df_final['Ngày khởi hành'].astype(str) + ' ' + df_final['Giờ khởi hành'].astype(str), errors='coerce')
         df_final['End'] = pd.to_datetime(df_final['Ngày khởi hành'].astype(str) + ' ' + df_final['Giờ kết thúc'].astype(str), errors='coerce')
         df_final.loc[df_final['End'] < df_final['Start'], 'End'] += pd.Timedelta(days=1)
@@ -165,74 +174,81 @@ def load_data_final(file):
         df_final['Duration'] = (df_final['End'] - df_final['Start']).dt.total_seconds() / 3600
         df_final['Tháng'] = df_final['Start'].dt.strftime('%Y-%m')
         
-        # Scope
-        def check_scope(r):
+        # --- LOGIC PHÂN BIỆT ĐI TỈNH MỚI (CHÍNH XÁC HƠN) ---
+        def check_scope_v2(r):
             s = str(r).lower()
-            return "Đi Tỉnh" if any(x in s for x in ['tỉnh', 'tp.', 'bình dương', 'đồng nai', 'vũng tàu', 'hà nội']) else "Nội thành"
-        df_final['Phạm Vi'] = df_final['Lộ trình'].apply(check_scope) if 'Lộ trình' in df_final.columns else 'Unknown'
+            # Danh sách các từ khóa chắc chắn là đi tỉnh (lân cận HCM/HN)
+            provinces = [
+                'bình dương', 'đồng nai', 'long an', 'bà rịa', 'vũng tàu', 'tây ninh', 
+                'bình phước', 'tiền giang', 'bến tre', 'cần thơ', 'vĩnh long', 'an giang',
+                'bắc ninh', 'hưng yên', 'hải dương', 'hải phòng', 'vĩnh phúc', 'hà nam', 
+                'nam định', 'thái bình', 'thái nguyên', 'hòa bình', 'bắc giang', 'phú thọ',
+                'thanh hóa', 'nghệ an'
+            ]
+            
+            # Nếu lộ trình chứa tên tỉnh -> Đi Tỉnh
+            if any(p in s for p in provinces):
+                return "Đi Tỉnh"
+            
+            # Mặc định còn lại là Nội thành (HCM/HN)
+            return "Nội thành"
 
-        return df_final
-    except Exception as e: return f"Lỗi: {str(e)}"
+        if 'Lộ trình' in df_final.columns:
+            df_final['Phạm Vi'] = df_final['Lộ trình'].apply(check_scope_v2)
+        else:
+            df_final['Phạm Vi'] = 'Unknown'
 
-# --- 3. HÀM TẠO ẢNH CHO PPTX (NÂNG CẤP) ---
+        return df_final, total_unique_cars # Trả về thêm số lượng xe
+    except Exception as e: return f"Lỗi: {str(e)}", 0
+
+# --- 3. HÀM TẠO ẢNH CHO PPTX ---
 def get_chart_img(data, x, y, kind='bar', title='', color='#0078d4'):
-    plt.figure(figsize=(7, 4.5)) # Tăng kích thước chút cho rõ
-    
+    plt.figure(figsize=(7, 4.5))
     if x not in data.columns or y not in data.columns:
         plt.text(0.5, 0.5, 'No Data', ha='center')
         img = BytesIO(); plt.savefig(img, format='png'); plt.close(); img.seek(0)
         return img
 
-    if kind == 'bar': # Thanh ngang
+    if kind == 'bar': 
         data = data.sort_values(by=x, ascending=True)
         bars = plt.barh(data[y], data[x], color=color)
         plt.xlabel(x)
-        plt.bar_label(bars, fmt='%g') # Hiện số liệu trên thanh
-    elif kind == 'column': # Thanh dọc
+        plt.bar_label(bars, fmt='%g')
+    elif kind == 'column': 
         bars = plt.bar(data[y], data[x], color=color)
         plt.ylabel(x)
         plt.xticks(rotation=45, ha='right')
         plt.bar_label(bars, fmt='%g')
-    elif kind == 'pie': # Tròn
-        wedges, texts, autotexts = plt.pie(data[x], labels=data[y], autopct='%1.1f%%', startangle=90, colors=['#107c10', '#d13438', '#0078d4', '#ffc107', '#8764b8'])
-        plt.setp(autotexts, size=9, weight="bold", color="white")
+    elif kind == 'pie': 
+        plt.pie(data[x], labels=data[y], autopct='%1.1f%%', startangle=90, colors=['#107c10', '#d13438', '#0078d4', '#ffc107', '#8764b8'])
     
     plt.title(title, pad=15, fontweight='bold', fontsize=12, color='#333')
     plt.tight_layout()
     img = BytesIO(); plt.savefig(img, format='png', dpi=120); plt.close(); img.seek(0)
     return img
 
-# --- 4. HÀM XUẤT PPTX (PROFESSIONAL VERSION) ---
+# --- 4. HÀM XUẤT PPTX ---
 def export_pptx(kpi, df_comp, df_status, top_users, top_drivers, df_bad_trips, selected_options, chart_prefs, df_scope):
     prs = Presentation()
     
-    # --- HELPER: ADD KPI CARD TO SLIDE ---
     def add_kpi_shape(slide, left, top, width, height, title, value, sub, color_rgb):
-        # Box nền
-        shape = slide.shapes.add_shape(1, left, top, width, height) # 1 = Rectangle
+        shape = slide.shapes.add_shape(1, left, top, width, height)
         shape.fill.solid()
         shape.fill.fore_color.rgb = RGBColor(255, 255, 255)
         shape.line.color.rgb = color_rgb
         shape.line.width = Pt(2.5)
-        shape.shadow.inherit = True # Có bóng đổ nhẹ
         
-        # Text Title
         tb = slide.shapes.add_textbox(left + Inches(0.1), top + Inches(0.1), width - Inches(0.2), Inches(0.3))
-        p = tb.text_frame.paragraphs[0]
-        p.text = title
-        p.font.size = Pt(11)
-        p.font.bold = True
-        p.font.color.rgb = RGBColor(100, 100, 100)
+        tb.text_frame.text = title
+        tb.text_frame.paragraphs[0].font.bold = True
+        tb.text_frame.paragraphs[0].font.color.rgb = RGBColor(100, 100, 100)
         
-        # Text Value
         tb_v = slide.shapes.add_textbox(left + Inches(0.1), top + Inches(0.4), width - Inches(0.2), Inches(0.5))
         p_v = tb_v.text_frame.paragraphs[0]
         p_v.text = str(value)
         p_v.font.size = Pt(24)
         p_v.font.bold = True
-        p_v.font.color.rgb = RGBColor(0, 0, 0)
         
-        # Text Sub
         tb_s = slide.shapes.add_textbox(left + Inches(0.1), top + height - Inches(0.4), width - Inches(0.2), Inches(0.3))
         p_s = tb_s.text_frame.paragraphs[0]
         p_s.text = sub
@@ -240,116 +256,50 @@ def export_pptx(kpi, df_comp, df_status, top_users, top_drivers, df_bad_trips, s
         p_s.font.italic = True
         p_s.font.color.rgb = RGBColor(150, 150, 150)
 
-    # --- SLIDE 1: TITLE ---
     slide = prs.slides.add_slide(prs.slide_layouts[0])
     slide.shapes.title.text = "BÁO CÁO VẬN HÀNH ĐỘI XE"
-    slide.placeholders[1].text = f"Cập nhật đến tháng: {kpi['last_month']}\nBáo cáo tự động từ hệ thống"
+    slide.placeholders[1].text = f"Cập nhật đến tháng: {kpi['last_month']}"
 
-    # --- SLIDE 2: KPI EXECUTIVE SUMMARY ---
-    slide = prs.slides.add_slide(prs.slide_layouts[5]) # Title Only
-    slide.shapes.title.text = "TỔNG QUAN HIỆU SUẤT (EXECUTIVE SUMMARY)"
+    slide = prs.slides.add_slide(prs.slide_layouts[5])
+    slide.shapes.title.text = "TỔNG QUAN HIỆU SUẤT"
     
-    # Vẽ 5 KPI cards thủ công cho đẹp
-    start_x = Inches(0.5)
-    gap = Inches(1.9)
-    y_pos = Inches(2.5)
-    
-    add_kpi_shape(slide, start_x, y_pos, Inches(1.8), Inches(1.5), "TỔNG CHUYẾN", f"{kpi['trips']}", "∑ Số chuyến", RGBColor(0, 120, 212))
-    add_kpi_shape(slide, start_x + gap, y_pos, Inches(1.8), Inches(1.5), "GIỜ VẬN HÀNH", f"{kpi['hours']:,.0f}", "∑ Giờ chạy", RGBColor(0, 120, 212))
-    add_kpi_shape(slide, start_x + gap*2, y_pos, Inches(1.8), Inches(1.5), "CÔNG SUẤT", f"{kpi['occupancy']:.1f}%", "Mục tiêu >50%", RGBColor(0, 120, 212))
-    add_kpi_shape(slide, start_x + gap*3, y_pos, Inches(1.8), Inches(1.5), "HOÀN THÀNH", f"{kpi['success_rate']:.1f}%", "Tỷ lệ thành công", RGBColor(16, 124, 16))
-    add_kpi_shape(slide, start_x + gap*4, y_pos, Inches(1.8), Inches(1.5), "HỦY/TỪ CHỐI", f"{kpi['cancel_rate'] + kpi['reject_rate']:.1f}%", "Cần cải thiện", RGBColor(209, 52, 56))
+    add_kpi_shape(slide, Inches(0.5), Inches(2.5), Inches(1.8), Inches(1.5), "TỔNG CHUYẾN", f"{kpi['trips']}", "Số chuyến", RGBColor(0, 120, 212))
+    add_kpi_shape(slide, Inches(2.4), Inches(2.5), Inches(1.8), Inches(1.5), "GIỜ VẬN HÀNH", f"{kpi['hours']:,.0f}", "Tổng giờ", RGBColor(0, 120, 212))
+    add_kpi_shape(slide, Inches(4.3), Inches(2.5), Inches(1.8), Inches(1.5), "CÔNG SUẤT", f"{kpi['occupancy']:.1f}%", "Mục tiêu >50%", RGBColor(0, 120, 212))
+    add_kpi_shape(slide, Inches(6.2), Inches(2.5), Inches(1.8), Inches(1.5), "HOÀN THÀNH", f"{kpi['success_rate']:.1f}%", "Tỷ lệ OK", RGBColor(16, 124, 16))
+    add_kpi_shape(slide, Inches(8.1), Inches(2.5), Inches(1.8), Inches(1.5), "HỦY/TỪ CHỐI", f"{kpi['cancel_rate'] + kpi['reject_rate']:.1f}%", "Tỷ lệ Fail", RGBColor(209, 52, 56))
 
-    # --- SLIDE 3: CẤU TRÚC & PHẠM VI (Tự động nhận xét) ---
     if "Biểu đồ Tổng quan" in selected_options:
         slide = prs.slides.add_slide(prs.slide_layouts[5])
         slide.shapes.title.text = "PHÂN TÍCH CẤU TRÚC SỬ DỤNG"
-        
-        # Chart 1: Structure
-        img1 = get_chart_img(df_comp.head(8), 'Value', 'Category', kind=chart_prefs.get('structure', 'bar'), title='Top Đơn Vị Sử Dụng')
+        img1 = get_chart_img(df_comp.head(8), 'Value', 'Category', kind=chart_prefs.get('structure', 'bar'), title='Top Đơn Vị')
         slide.shapes.add_picture(img1, Inches(0.5), Inches(1.8), Inches(4.5), Inches(3.5))
-        
-        # Chart 2: Scope
-        img2 = get_chart_img(df_scope, 'Số lượng', 'Phạm vi', kind=chart_prefs.get('scope', 'pie'), title='Phạm Vi Di Chuyển')
+        img2 = get_chart_img(df_scope, 'Số lượng', 'Phạm vi', kind=chart_prefs.get('scope', 'pie'), title='Phạm Vi')
         slide.shapes.add_picture(img2, Inches(5.2), Inches(1.8), Inches(4.5), Inches(3.5))
-        
-        # Auto-Insights Box
-        txBox = slide.shapes.add_textbox(Inches(0.5), Inches(5.5), Inches(9), Inches(1.5))
-        tf = txBox.text_frame
-        tf.text = "📌 NHẬN XÉT CHÍNH:"
-        tf.paragraphs[0].font.bold = True
-        
-        # Logic tạo câu nhận xét
-        if not df_comp.empty:
-            top_unit = df_comp.iloc[0]
-            p = tf.add_paragraph()
-            p.text = f"• Đơn vị sử dụng xe nhiều nhất là {top_unit['Category']} với {top_unit['Value']} chuyến, chiếm tỷ trọng lớn trong cơ cấu."
-            p.level = 0
-            
-        if not df_scope.empty:
-            top_scope = df_scope.iloc[0]
-            p = tf.add_paragraph()
-            p.text = f"• Nhu cầu di chuyển chủ yếu là {top_scope['Phạm vi']} ({top_scope['Số lượng']} chuyến)."
 
-    # --- SLIDE 4: TOP USER & DRIVER ---
     if "Bảng Xếp Hạng (Top User/Driver)" in selected_options:
         slide = prs.slides.add_slide(prs.slide_layouts[5])
         slide.shapes.title.text = "BẢNG XẾP HẠNG HOẠT ĐỘNG"
-        
-        img_u = get_chart_img(top_users.head(8), 'Số_chuyến', 'Người sử dụng xe', kind=chart_prefs.get('top_user', 'bar'), title='Top 8 Người Dùng', color='#8764b8')
+        img_u = get_chart_img(top_users.head(8), 'Số_chuyến', 'Người sử dụng xe', kind=chart_prefs.get('top_user', 'bar'), title='Top Users', color='#8764b8')
         slide.shapes.add_picture(img_u, Inches(0.5), Inches(1.8), Inches(4.5), Inches(3.5))
-        
-        img_d = get_chart_img(top_drivers.head(8), 'Số_chuyến', 'Tên tài xế', kind=chart_prefs.get('top_driver', 'bar'), title='Top 8 Tài Xế', color='#00cc6a')
+        img_d = get_chart_img(top_drivers.head(8), 'Số_chuyến', 'Tên tài xế', kind=chart_prefs.get('top_driver', 'bar'), title='Top Drivers', color='#00cc6a')
         slide.shapes.add_picture(img_d, Inches(5.2), Inches(1.8), Inches(4.5), Inches(3.5))
-        
-        # Auto-Insights
-        txBox = slide.shapes.add_textbox(Inches(0.5), Inches(5.5), Inches(9), Inches(1.5))
-        tf = txBox.text_frame
-        tf.text = "📌 GHI NHẬN THÀNH TÍCH:"
-        tf.paragraphs[0].font.bold = True
-        
-        if not top_users.empty:
-            best_user = top_users.iloc[0]
-            tf.add_paragraph().text = f"• Người dùng tích cực nhất: {best_user['Người sử dụng xe']} ({best_user['Số_chuyến']} chuyến) - thuộc {best_user['Công_ty']}."
-        
-        if not top_drivers.empty:
-            best_driver = top_drivers.iloc[0]
-            tf.add_paragraph().text = f"• Tài xế chạy nhiều nhất: {best_driver['Tên tài xế']} ({best_driver['Số_chuyến']} chuyến). Tuyến hay chạy: {best_driver['Tuyến_hay_chạy']}."
 
-    # --- SLIDE 5: CHẤT LƯỢNG & LỖI ---
     if "Danh sách Hủy/Từ chối" in selected_options:
         slide = prs.slides.add_slide(prs.slide_layouts[5])
-        slide.shapes.title.text = "CHẤT LƯỢNG & CÁC CHUYẾN CẦN LƯU Ý"
-        
-        # Biểu đồ trạng thái nhỏ bên trái
-        img_st = get_chart_img(df_status, 'Số lượng', 'Trạng thái', kind=chart_prefs.get('status', 'pie'), title='Tỷ Lệ Trạng Thái')
-        slide.shapes.add_picture(img_st, Inches(0.5), Inches(1.8), Inches(3.5), Inches(3.0))
-        
-        # Bảng Bad Trips bên phải
+        slide.shapes.title.text = "CHI TIẾT ĐƠN HỦY / TỪ CHỐI"
         if not df_bad_trips.empty:
-            tx = slide.shapes.add_textbox(Inches(4.2), Inches(1.5), Inches(5), Inches(0.5))
-            tx.text_frame.text = f"Danh sách {len(df_bad_trips)} chuyến bị Hủy/Từ chối gần nhất:"
-            
             wanted_cols = ['Start_Str', 'User', 'Status', 'Note']
             avail_cols = [c for c in wanted_cols if c in df_bad_trips.columns]
-            rows, cols = min(len(df_bad_trips)+1, 8), len(avail_cols)
-            
+            rows, cols = min(len(df_bad_trips)+1, 10), len(avail_cols)
             if cols > 0:
-                table = slide.shapes.add_table(rows, cols, Inches(4.2), Inches(2.0), Inches(5.5), Inches(0.8)).table
-                # Format Header
+                table = slide.shapes.add_table(rows, cols, Inches(0.5), Inches(1.5), Inches(9), Inches(0.8)).table
                 for i, h in enumerate(avail_cols):
                     cell = table.cell(0, i); cell.text = h
-                    cell.fill.solid(); cell.fill.fore_color.rgb = RGBColor(200, 200, 200)
-                    cell.text_frame.paragraphs[0].font.size = Pt(9)
-                    cell.text_frame.paragraphs[0].font.bold = True
-                    cell.text_frame.paragraphs[0].font.color.rgb = RGBColor(0,0,0)
-                # Fill Rows
-                for i, row in enumerate(df_bad_trips.head(7).itertuples(), start=1):
+                for i, row in enumerate(df_bad_trips.head(9).itertuples(), start=1):
                     for j, col_name in enumerate(avail_cols):
                         val = getattr(row, col_name, "")
-                        cell = table.cell(i, j)
-                        cell.text = str(val)[:30] + "..." if len(str(val)) > 30 else str(val) # Cắt ngắn nếu dài
-                        cell.text_frame.paragraphs[0].font.size = Pt(8)
+                        table.cell(i, j).text = str(val)[:30]
 
     out = BytesIO(); prs.save(out); out.seek(0)
     return out
@@ -359,9 +309,15 @@ st.title("📊 Phước Minh - Hệ Thống Quản Trị & Tối Ưu Hóa Đội
 uploaded_file = st.file_uploader("Upload Excel", type=['xlsx'], label_visibility="collapsed")
 
 if uploaded_file:
-    df = load_data_final(uploaded_file)
-    if isinstance(df, str): st.error(df); st.stop()
+    # --- LOAD DỮ LIỆU VÀ LẤY SỐ XE THỰC TẾ ---
+    data_load, real_car_count = load_data_final(uploaded_file)
     
+    if isinstance(data_load, str): # Nếu trả về chuỗi lỗi
+        st.error(data_load)
+        st.stop()
+    else:
+        df = data_load
+
     # --- SIDEBAR FILTERS ---
     with st.sidebar:
         st.header("🗂️ Bộ Lọc Dữ Liệu")
@@ -392,16 +348,31 @@ if uploaded_file:
 
     if df_filtered.empty: st.warning("Không có dữ liệu."); st.stop()
 
-    # --- KPI CALCULATION ---
-    total_cars = 21
-    if 'HCM' in sel_loc or 'NAM' in sel_loc.upper(): total_cars = 16
-    elif 'HN' in sel_loc or 'BAC' in sel_loc.upper(): total_cars = 5
+    # --- KPI CALCULATION (CÔNG THỨC MỚI) ---
+    # Nếu lọc theo Region, có thể số xe sẽ ít hơn tổng 30 xe.
+    # Tuy nhiên để tính Occupancy chuẩn theo "Tổng nguồn lực", ta nên dùng tổng xe khả dụng tại khu vực đó.
+    # Logic: Nếu chọn Tất cả -> 30 xe. Nếu chọn HN -> đếm xe HN.
     
+    # Đếm số xe hoạt động trong vùng dữ liệu đã lọc (để chính xác hơn cho từng vùng)
+    active_cars_in_filter = df_filtered['Biển số xe'].nunique()
+    
+    # Nếu user muốn dùng số cố định 30 cho toàn quốc:
+    # total_cars_kpi = real_car_count if sel_loc == "Tất cả" else active_cars_in_filter
+    # Nhưng an toàn nhất là dùng số xe thực tế xuất hiện trong filter hoặc real_car_count nếu không filter.
+    
+    total_cars_kpi = real_car_count if real_car_count > 0 else 30 # Fallback 30 nếu không đọc được
+    if sel_loc != "Tất cả":
+         # Nếu lọc, ước tính số xe theo tỷ lệ hoặc đếm thực tế
+         total_cars_kpi = active_cars_in_filter if active_cars_in_filter > 0 else 1
+
     days = max((df_filtered['Start'].max() - df_filtered['Start'].min()).days + 1, 1)
     
     total_trips = len(df_filtered)
     total_hours = df_filtered['Duration'].sum()
-    occupancy = (total_hours / (total_cars * days * 9) * 100)
+    
+    # --- CÔNG THỨC OCCUPANCY ĐÃ SỬA: 8h/ngày ---
+    occupancy_cap = total_cars_kpi * days * 8 
+    occupancy = (total_hours / occupancy_cap * 100) if occupancy_cap > 0 else 0
     
     counts = df_filtered['Tình trạng đơn yêu cầu'].fillna('Unknown').value_counts()
     completed = counts.get('CLOSED', 0) + counts.get('APPROVED', 0)
@@ -415,7 +386,7 @@ if uploaded_file:
     cards = [
         {"title": "Tổng Chuyến", "val": f"{total_trips}", "sub": "∑ Đếm số dòng", "color": "#0078d4", "icon": "🚘", "is_percent": False},
         {"title": "Giờ Vận Hành", "val": f"{total_hours:,.0f}", "sub": "∑ (Giờ về - Giờ đi)", "color": "#0078d4", "icon": "⏱️", "is_percent": False},
-        {"title": "Công Suất", "val": f"{occupancy:.1f}%", "sub": f"Tổng Giờ / ({total_cars}xe * {days}ngày * 9h)", "color": "#0078d4", "icon": "📉", "is_percent": True, "pct_val": min(occupancy, 100)},
+        {"title": "Công Suất", "val": f"{occupancy:.1f}%", "sub": f"Tổng Giờ / ({total_cars_kpi}xe * {days}ngày * 8h)", "color": "#0078d4", "icon": "📉", "is_percent": True, "pct_val": min(occupancy, 100)},
         {"title": "Hoàn Thành", "val": f"{suc_rate:.1f}%", "sub": "Số đơn xong / Tổng đơn", "color": "#107c10", "icon": "✅", "is_percent": True, "pct_val": suc_rate},
         {"title": "Hủy / Từ Chối", "val": f"{fail_rate:.1f}%", "sub": "Số đơn hủy / Tổng đơn", "color": "#d13438", "icon": "🚫", "is_percent": True, "pct_val": fail_rate},
     ]
