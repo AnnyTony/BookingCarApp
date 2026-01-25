@@ -6,6 +6,7 @@ from io import BytesIO
 from pptx import Presentation
 from pptx.util import Inches, Pt
 from pptx.dml.color import RGBColor
+import re # Thư viện xử lý chuỗi nâng cao
 
 # --- 1. CẤU HÌNH TRANG & CSS ---
 st.set_page_config(page_title="Hệ Thống Quản Trị & Tối Ưu Hóa Đội Xe", page_icon="🚘", layout="wide")
@@ -36,7 +37,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# --- 2. HÀM XỬ LÝ DỮ LIỆU (CẬP NHẬT TRẢ VỀ LIST XE) ---
+# --- 2. HÀM XỬ LÝ DỮ LIỆU (CÓ LỌC BIỂN SỐ THÔNG MINH) ---
 @st.cache_data
 def load_data_final(file):
     try:
@@ -63,13 +64,29 @@ def load_data_final(file):
 
         df_bk.columns = df_bk.columns.str.strip()
         df_final = df_bk
-        all_cars_list = [] # Danh sách xe tổng (Toàn bộ)
+        all_cars_list = [] 
+
+        # --- HÀM LỌC RÁC BIỂN SỐ XE ---
+        def is_valid_plate(plate):
+            s = str(plate).strip().upper()
+            # 1. Loại bỏ nếu quá dài (ngày tháng thường dài > 15 ký tự hoặc có giờ phút)
+            if len(s) > 12 or len(s) < 5: return False
+            # 2. Loại bỏ nếu chứa dấu hai chấm (dạng giờ 00:00:00) hoặc năm 202x
+            if ":" in s or "2024" in s or "2025" in s or "2026" in s: return False
+            # 3. Loại bỏ tiêu đề
+            if "BIỂN SỐ" in s: return False
+            # 4. Phải có số
+            if not any(char.isdigit() for char in s): return False
+            return True
+        # -------------------------------
 
         if not df_driver.empty:
             df_driver.columns = df_driver.columns.str.strip()
             if 'Biển số xe' in df_driver.columns:
-                # Lấy danh sách xe gốc từ sheet Driver
-                all_cars_list = df_driver['Biển số xe'].dropna().unique().tolist()
+                # Lấy danh sách thô
+                raw_list = df_driver['Biển số xe'].dropna().unique().tolist()
+                # Áp dụng bộ lọc làm sạch
+                all_cars_list = [x for x in raw_list if is_valid_plate(x)]
                 
                 df_driver = df_driver.drop_duplicates(subset=['Biển số xe'], keep='last')
                 df_final = df_final.merge(df_driver[['Biển số xe', 'Tên tài xế']], on='Biển số xe', how='left', suffixes=('', '_D'))
@@ -77,9 +94,10 @@ def load_data_final(file):
                     if 'Tên tài xế' not in df_final.columns: df_final['Tên tài xế'] = df_final['Tên tài xế_D']
                     else: df_final['Tên tài xế'] = df_final['Tên tài xế'].fillna(df_final['Tên tài xế_D'])
 
-        # Fallback: Nếu không có list xe từ driver, lấy từ booking
+        # Fallback: Lấy từ lịch sử nếu list xe rỗng
         if not all_cars_list and 'Biển số xe' in df_final.columns:
-             all_cars_list = df_final['Biển số xe'].dropna().unique().tolist()
+             raw_list_bk = df_final['Biển số xe'].dropna().unique().tolist()
+             all_cars_list = [x for x in raw_list_bk if is_valid_plate(x)]
 
         if not df_cbnv.empty:
             df_cbnv.columns = df_cbnv.columns.str.strip()
@@ -117,7 +135,7 @@ def load_data_final(file):
 
         df_final['Phạm Vi'] = df_final['Lộ trình'].apply(check_scope_v2) if 'Lộ trình' in df_final.columns else 'Unknown'
 
-        return df_final, all_cars_list # Trả về DF và List xe
+        return df_final, all_cars_list 
     except Exception as e: return f"Lỗi: {str(e)}", []
 
 # --- 3. HÀM TẠO ẢNH CHO PPTX ---
@@ -231,9 +249,16 @@ if uploaded_file:
     # --- KPI CALCULATION ---
     # Logic xác định danh sách xe để tính toán
     if sel_loc == "Tất cả" and sel_comp == "Tất cả" and sel_bu == "Tất cả":
-        cars_to_count = all_cars_list # Danh sách gốc từ Driver sheet
+        cars_to_count = all_cars_list # Danh sách gốc từ Driver sheet (Đã lọc sạch)
     else:
-        cars_to_count = df_filtered['Biển số xe'].dropna().unique().tolist() # Danh sách xe thực tế chạy trong filter
+        # Nếu lọc, chỉ lấy danh sách xe xuất hiện trong filter, và cũng phải làm sạch
+        def is_valid_plate(plate):
+            s = str(plate).strip().upper()
+            if len(s) > 12 or len(s) < 5 or ":" in s or "202" in s or "BIỂN SỐ" in s: return False
+            return any(char.isdigit() for char in s)
+            
+        raw_filtered_cars = df_filtered['Biển số xe'].dropna().unique().tolist()
+        cars_to_count = [x for x in raw_filtered_cars if is_valid_plate(x)]
     
     total_cars_kpi = len(cars_to_count)
     if total_cars_kpi == 0: total_cars_kpi = 1
@@ -355,11 +380,10 @@ if uploaded_file:
             st.write("#### 1. Các tham số tính Công Suất")
             st.write(f"- **Tổng số xe ($N$):** {total_cars_kpi} xe")
             
-            # --- [MỚI] NÚT XEM DANH SÁCH XE ---
-            with st.expander(f"🚗 Xem danh sách {total_cars_kpi} xe được tính toán"):
-                st.write("Đây là danh sách biển số xe được hệ thống ghi nhận:")
-                st.table(pd.DataFrame(cars_to_count, columns=["Biển số xe"]))
-            # -----------------------------------
+            # --- [MỚI] CHECK DANH SÁCH XE ---
+            with st.expander(f"🚗 Xem danh sách {total_cars_kpi} xe được tính toán (Click để mở)"):
+                st.table(pd.DataFrame(cars_to_count, columns=["Danh Sách Biển Số Xe"]))
+            # --------------------------------
 
             st.write(f"- **Số ngày trong kỳ lọc ($D$):** {days} ngày (từ {df_filtered['Start'].min().date()} đến {df_filtered['Start'].max().date()})")
             st.write(f"- **Giờ tiêu chuẩn/ngày:** 8 giờ")
