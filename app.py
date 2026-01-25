@@ -116,14 +116,22 @@ def load_data_final(file):
         return df_final
     except Exception as e: return f"Lỗi: {str(e)}"
 
-# --- 3. HÀM TẠO ẢNH CHO PPTX ---
+# --- 3. HÀM TẠO ẢNH CHO PPTX (FIX LỖI KEYERROR) ---
 def get_chart_img(data, x, y, kind='bar', title='', color='#0078d4'):
     plt.figure(figsize=(6, 4))
+    
+    # Kiểm tra an toàn: Đảm bảo cột tồn tại trước khi vẽ
+    if x not in data.columns or y not in data.columns:
+        plt.text(0.5, 0.5, 'Data Error', ha='center')
+        img = BytesIO(); plt.savefig(img, format='png'); plt.close(); img.seek(0)
+        return img
+
     if kind == 'bar':
         data = data.sort_values(by=x, ascending=True)
         plt.barh(data[y], data[x], color=color)
         plt.xlabel(x)
     elif kind == 'pie':
+        # Lưu ý: Pie chart matplotlib nhận labels=data[y], values=data[x]
         plt.pie(data[x], labels=data[y], autopct='%1.1f%%', startangle=90, colors=['#107c10', '#d13438', '#0078d4'])
     
     plt.title(title, fontsize=12, fontweight='bold')
@@ -155,8 +163,12 @@ def export_pptx(kpi, df_comp, df_status, top_users, top_drivers, df_bad_trips, s
     if "Biểu đồ Tổng quan" in selected_options:
         slide = prs.slides.add_slide(prs.slide_layouts[5])
         slide.shapes.title.text = "PHÂN BỔ THEO CÔNG TY & TRẠNG THÁI"
+        
+        # Vẽ biểu đồ 1
         img1 = get_chart_img(df_comp.head(8), 'Số chuyến', 'Công ty', 'bar', 'Top Công Ty')
         slide.shapes.add_picture(img1, Inches(0.5), Inches(2), Inches(4.5), Inches(3.5))
+        
+        # Vẽ biểu đồ 2 (Lưu ý tên cột phải khớp với dataframe truyền vào)
         img2 = get_chart_img(df_status, 'Số lượng', 'Trạng thái', 'pie', 'Trạng Thái Đơn')
         slide.shapes.add_picture(img2, Inches(5.2), Inches(2), Inches(4.5), Inches(3.5))
 
@@ -175,24 +187,23 @@ def export_pptx(kpi, df_comp, df_status, top_users, top_drivers, df_bad_trips, s
         slide = prs.slides.add_slide(prs.slide_layouts[5])
         slide.shapes.title.text = "CHI TIẾT ĐƠN HỦY / TỪ CHỐI"
         if not df_bad_trips.empty:
-            # Chỉ lấy các cột CÓ trong dữ liệu
             wanted_cols = ['Start_Str', 'User', 'Status', 'Note']
             avail_cols = [c for c in wanted_cols if c in df_bad_trips.columns]
             
             rows, cols = min(len(df_bad_trips)+1, 10), len(avail_cols)
-            table = slide.shapes.add_table(rows, cols, Inches(0.5), Inches(1.5), Inches(9), Inches(0.8)).table
-            
-            for i, h in enumerate(avail_cols):
-                cell = table.cell(0, i)
-                cell.text = h
-                cell.fill.solid(); cell.fill.fore_color.rgb = RGBColor(0, 120, 212)
-                cell.text_frame.paragraphs[0].font.color.rgb = RGBColor(255, 255, 255)
-            
-            for i, row in enumerate(df_bad_trips.head(9).itertuples(), start=1):
-                for j, col_name in enumerate(avail_cols):
-                    # Lấy giá trị động theo tên cột
-                    val = getattr(row, col_name, "")
-                    table.cell(i, j).text = str(val) if str(val) != 'nan' else ""
+            if cols > 0:
+                table = slide.shapes.add_table(rows, cols, Inches(0.5), Inches(1.5), Inches(9), Inches(0.8)).table
+                
+                for i, h in enumerate(avail_cols):
+                    cell = table.cell(0, i)
+                    cell.text = h
+                    cell.fill.solid(); cell.fill.fore_color.rgb = RGBColor(0, 120, 212)
+                    cell.text_frame.paragraphs[0].font.color.rgb = RGBColor(255, 255, 255)
+                
+                for i, row in enumerate(df_bad_trips.head(9).itertuples(), start=1):
+                    for j, col_name in enumerate(avail_cols):
+                        val = getattr(row, col_name, "")
+                        table.cell(i, j).text = str(val) if str(val) != 'nan' else ""
         else:
             slide.shapes.add_textbox(Inches(1), Inches(2), Inches(5), Inches(1)).text_frame.text = "Không có dữ liệu."
 
@@ -294,15 +305,11 @@ if uploaded_file:
         if not bad_trips.empty:
             st.write(f"##### Danh sách {len(bad_trips)} chuyến bị Hủy/Từ chối")
             
-            # --- FIX LỖI KEYERROR TẠI ĐÂY ---
-            # Danh sách các cột MONG MUỐN hiển thị
+            # Chỉ hiển thị cột có tồn tại
             desired_cols = ['Ngày khởi hành', 'Người sử dụng xe', 'Tên tài xế', 'Lý do', 'Note', 'Tình trạng đơn yêu cầu']
-            
-            # Chỉ lấy các cột THỰC SỰ CÓ trong file Excel
             valid_cols = [c for c in desired_cols if c in bad_trips.columns]
             
             st.dataframe(bad_trips[valid_cols], use_container_width=True)
-            # --------------------------------
         else:
             st.success("Không có chuyến nào bị hủy trong giai đoạn này.")
 
@@ -321,12 +328,23 @@ if uploaded_file:
         st.write("") 
         st.write("") 
         
+        # --- CHUẨN BỊ DỮ LIỆU EXPORT (PHẦN QUAN TRỌNG ĐỂ TRÁNH LỖI) ---
         kpi_data = {
             'trips': total_trips, 'hours': total_hours, 'occupancy': occupancy,
             'success_rate': suc_rate, 'cancel_rate': fail_rate, 'reject_rate': 0,
             'last_month': df['Tháng'].max() if not df.empty else "N/A"
         }
         
+        # 1. Chuẩn bị DataFrame Status (Force Rename cột để tránh lỗi KeyError)
+        df_status_exp = counts.reset_index()
+        # Ép buộc đặt tên cột thành ['Trạng thái', 'Số lượng'] bất kể pandas trả về gì
+        df_status_exp.columns = ['Trạng thái', 'Số lượng']
+        
+        # 2. Chuẩn bị DataFrame Company (Force Rename)
+        df_comp_exp = df['Công ty'].value_counts().reset_index()
+        df_comp_exp.columns = ['Công ty', 'Số chuyến']
+
+        # 3. Chuẩn bị Bad Trips
         df_bad_exp = pd.DataFrame()
         if not bad_trips.empty:
             df_bad_exp = bad_trips.copy()
@@ -335,8 +353,8 @@ if uploaded_file:
 
         pptx_file = export_pptx(
             kpi_data, 
-            by_comp, 
-            counts.reset_index(name='Số lượng').rename(columns={'index': 'Trạng thái'}), 
+            df_comp_exp,    # Đã rename chuẩn
+            df_status_exp,  # Đã rename chuẩn (Sửa lỗi tại đây)
             top_user, 
             top_driver, 
             df_bad_exp,
