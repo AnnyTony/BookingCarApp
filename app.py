@@ -159,9 +159,11 @@ def load_data_final(file):
         return df_bk, report_info, df_driver
     except Exception as e: return f"Lỗi: {str(e)}", pd.DataFrame(), {}, pd.DataFrame()
 
-# --- 3. HÀM TẠO ẢNH ---
+# --- 3. HÀM TẠO ẢNH CHO PPTX ---
 def get_chart_img(data, x, y, kind='bar', title='', color='#0078d4'):
     plt.figure(figsize=(7, 4.5))
+    
+    # Check safe columns for plotting
     if x not in data.columns or y not in data.columns:
         plt.text(0.5, 0.5, 'No Data', ha='center'); img = BytesIO(); plt.savefig(img, format='png'); plt.close(); img.seek(0); return img
     
@@ -229,10 +231,11 @@ def export_pptx(kpi, df_comp, df_status, top_users, top_drivers, df_bad_trips, c
     # Slide 5: Bad Trips
     if not df_bad_trips.empty:
         slide = prs.slides.add_slide(prs.slide_layouts[5]); slide.shapes.title.text = "CHI TIẾT ĐƠN HỦY / TỪ CHỐI"
-        # --- FIX: CHỌN CỘT AN TOÀN CHO PPTX ---
-        wanted_cols = ['Start_Str', 'User', 'Status', 'Note']
+        
+        # --- SAFE COLUMN SELECTION FOR PPTX ---
+        wanted_cols = ['Start_Str', 'User', 'Status', 'Note', 'Lý do']
         avail_cols = [c for c in wanted_cols if c in df_bad_trips.columns]
-        # --------------------------------------
+        
         rows, cols = min(len(df_bad_trips)+1, 10), len(avail_cols)
         if cols > 0:
             table = slide.shapes.add_table(rows, cols, Inches(0.5), Inches(1.5), Inches(9), Inches(0.8)).table
@@ -242,7 +245,7 @@ def export_pptx(kpi, df_comp, df_status, top_users, top_drivers, df_bad_trips, c
             for i, row in enumerate(df_bad_trips.head(9).itertuples(), start=1):
                 for j, col_name in enumerate(avail_cols):
                     val = getattr(row, col_name, "")
-                    table.cell(i, j).text = str(val)[:30]
+                    table.cell(i, j).text = str(val)[:30] # Cắt ngắn nếu dài
 
     out = BytesIO(); prs.save(out); out.seek(0); return out
 
@@ -385,16 +388,18 @@ if uploaded_file:
         st.write("#### Chi tiết Hủy / Từ chối")
         bad = df_filtered[df_filtered['Tình trạng đơn yêu cầu'].isin(['CANCELED', 'CANCELLED', 'REJECTED_BY_ADMIN'])]
         
-        # --- FIX LỖI KEY ERROR TẠI ĐÂY ---
-        # Chỉ lấy các cột CÓ THỰC trong dữ liệu
+        # --- SAFE COLUMN SELECTION (FIX KEYERROR) ---
         desired_cols = ['Ngày khởi hành', 'Biển số xe', 'Phân Loại Xe', 'Lý do', 'Note', 'Tình trạng đơn yêu cầu']
-        valid_cols = [c for c in desired_cols if c in bad.columns]
-        # ---------------------------------
+        actual_cols = [c for c in desired_cols if c in bad.columns]
         
-        st.dataframe(bad[valid_cols], use_container_width=True)
+        if not bad.empty:
+            st.dataframe(bad[actual_cols], use_container_width=True)
+        else:
+            st.success("Không có chuyến nào bị hủy trong giai đoạn này.")
 
     with t4:
         st.subheader("⚙️ Chi Tiết Đối Soát Dữ Liệu")
+        
         with st.expander("🚨 Kiểm tra Trùng lặp trong danh sách Driver", expanded=True):
             if report_info['duplicates_list']:
                 st.error(f"Phát hiện {len(report_info['duplicates_list'])} biển số bị nhập trùng trong file Driver!")
@@ -402,12 +407,12 @@ if uploaded_file:
             else:
                 st.success("Dữ liệu Driver sạch, không có biển số trùng.")
 
-        with st.expander(f"🚗 Danh sách Xe Vãng Lai (Không có trong Driver Sheet)"):
+        with st.expander(f"🚗 Danh sách Xe Vãng Lai"):
             vang_lai = df_filtered[df_filtered['Phân Loại Xe'] == 'Xe Vãng lai']['Biển số xe'].unique()
             st.write(f"Tìm thấy **{len(vang_lai)}** xe vãng lai trong bộ lọc hiện tại:")
             st.table(pd.DataFrame(vang_lai, columns=['Biển số Vãng lai']))
 
-        with st.expander(f"🚙 Danh sách Xe Nội Bộ (Có trong Driver Sheet)"):
+        with st.expander(f"🚙 Danh sách Xe Nội Bộ"):
             noi_bo = df_filtered[df_filtered['Phân Loại Xe'] == 'Xe Nội bộ']['Biển số xe'].unique()
             st.write(f"Tìm thấy **{len(noi_bo)}** xe nội bộ hoạt động:")
             st.table(pd.DataFrame(noi_bo, columns=['Biển số Nội bộ']))
