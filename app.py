@@ -14,7 +14,7 @@ st.markdown("""
 <style>
     .block-container {padding-top: 1rem; padding-bottom: 3rem;}
     
-    /* KPI Card Style */
+    /* KPI Card Style - Power BI */
     .kpi-card {
         background-color: white; border-radius: 8px; padding: 15px;
         box-shadow: 0 2px 4px rgba(0,0,0,0.08); border-left: 5px solid #0078d4;
@@ -24,11 +24,10 @@ st.markdown("""
     .kpi-value {font-size: 28px; font-weight: 700; color: #333; margin: 5px 0;}
     .kpi-sub {font-size: 11px; color: #28a745; font-weight: 500;}
     
-    /* Breadcrumb Style */
-    .breadcrumb {
-        font-size: 16px; color: #0078d4; font-weight: 600; 
-        background-color: #f0f2f6; padding: 10px; border-radius: 5px;
-        margin-bottom: 20px;
+    /* Header Chart */
+    .chart-header {
+        font-size: 16px; font-weight: 700; color: #0078d4; 
+        margin-bottom: 10px; border-bottom: 2px solid #f0f2f6; padding-bottom: 5px;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -39,12 +38,14 @@ def load_data_final(file):
     try:
         xl = pd.ExcelFile(file, engine='openpyxl')
         
+        # Tìm sheet
         sheet_driver = next((s for s in xl.sheet_names if 'driver' in s.lower()), None)
         sheet_booking = next((s for s in xl.sheet_names if 'booking' in s.lower()), None)
         sheet_cbnv = next((s for s in xl.sheet_names if 'cbnv' in s.lower()), None)
         
         if not sheet_booking: return "❌ Không tìm thấy sheet 'Booking car'."
 
+        # Hàm đọc header thông minh
         def smart_read(excel, sheet_name, keywords):
             df_preview = excel.parse(sheet_name, header=None, nrows=10)
             header_idx = 0
@@ -54,12 +55,15 @@ def load_data_final(file):
                     header_idx = idx; break
             return excel.parse(sheet_name, header=header_idx)
 
+        # Load Data
         df_bk = smart_read(xl, sheet_booking, ['ngày khởi hành'])
         df_driver = smart_read(xl, sheet_driver, ['biển số xe']) if sheet_driver else pd.DataFrame()
         df_cbnv = smart_read(xl, sheet_cbnv, ['full name']) if sheet_cbnv else pd.DataFrame()
 
+        # Clean Headers
         df_bk.columns = df_bk.columns.str.strip()
         
+        # Merge Driver
         df_final = df_bk
         if not df_driver.empty:
             df_driver.columns = df_driver.columns.str.strip()
@@ -69,6 +73,7 @@ def load_data_final(file):
                 if 'Tên tài xế_D' in df_final.columns:
                     df_final['Tên tài xế'] = df_final['Tên tài xế'].fillna(df_final['Tên tài xế_D'])
 
+        # Merge CBNV
         if not df_cbnv.empty:
             df_cbnv.columns = df_cbnv.columns.str.strip()
             col_map = {}
@@ -78,6 +83,7 @@ def load_data_final(file):
                 if 'bu' in str(c).lower(): col_map[c] = 'BU'
                 if 'location' in str(c).lower(): col_map[c] = 'Location'
             
+            # Kiểm tra cột tồn tại trước khi rename
             available_cols = [c for c in col_map.keys() if c in df_cbnv.columns]
             df_cbnv = df_cbnv[available_cols].rename(columns=col_map)
             
@@ -85,6 +91,7 @@ def load_data_final(file):
                 df_cbnv = df_cbnv.drop_duplicates(subset=['Full Name'], keep='first')
                 df_final = df_final.merge(df_cbnv, left_on='Người sử dụng xe', right_on='Full Name', how='left')
 
+        # Fillna & Format
         for c in ['Công ty', 'BU', 'Location']:
             if c not in df_final.columns: df_final[c] = 'Unknown'
             else: df_final[c] = df_final[c].fillna('Unknown').astype(str)
@@ -97,6 +104,7 @@ def load_data_final(file):
         df_final['Năm'] = df_final['Start'].dt.year
         df_final['Loại Chuyến'] = df_final['Duration'].apply(lambda x: 'Nửa ngày' if x <= 4 else 'Cả ngày')
         
+        # Scope
         def check_scope(r):
             s = str(r).lower()
             return "Đi Tỉnh" if any(x in s for x in ['tỉnh', 'tp.', 'bình dương', 'đồng nai', 'vũng tàu', 'hà nội']) else "Nội thành"
@@ -118,7 +126,7 @@ def get_chart_img(data, x, y, kind='bar', title=''):
     return img
 
 # --- 4. HÀM XUẤT PPTX ---
-def export_pptx(kpi, df_status, df_breakdown, breakdown_col):
+def export_pptx(kpi, df_status, df_comp):
     prs = Presentation()
     
     # Slide 1: Title
@@ -136,12 +144,10 @@ def export_pptx(kpi, df_status, df_breakdown, breakdown_col):
     • Tỷ lệ Hủy/Từ chối: {kpi['cancel_rate'] + kpi['reject_rate']:.1f}%
     """
     
-    # Slide 3: Chart Breakdown (Dynamic)
+    # Slide 3: Chart
     slide = prs.slides.add_slide(prs.slide_layouts[5])
-    slide.shapes.title.text = f"Phân Bổ Theo {breakdown_col}"
-    
-    # Vẽ biểu đồ động theo cột breakdown hiện tại
-    img1 = get_chart_img(df_breakdown.head(10), breakdown_col, 'Số chuyến', 'bar', f'Top {breakdown_col}')
+    slide.shapes.title.text = "Phân Bổ Công Ty & Trạng Thái"
+    img1 = get_chart_img(df_comp.head(8), 'Công ty', 'Số chuyến', 'bar', 'Top Công ty')
     slide.shapes.add_picture(img1, Inches(0.5), Inches(2), Inches(4.5), Inches(3.5))
     
     img2 = get_chart_img(df_status, 'Trạng thái', 'Số lượng', 'pie', 'Trạng thái')
@@ -158,163 +164,155 @@ if uploaded_file:
     df = load_data_final(uploaded_file)
     if isinstance(df, str): st.error(df); st.stop()
     
-    # --- LOGIC CÂY THƯ MỤC CASCADING (DRILL-DOWN) ---
+    # --- CÂY THƯ MỤC LỌC (HIERARCHY FILTER) ---
     with st.sidebar:
-        st.header("🗂️ Phân Cấp Dữ Liệu")
-        st.info("Bộ lọc này hoạt động theo cơ chế Cha -> Con (Drill-down)")
+        st.header("🗂️ Cây Thư Mục Lọc")
+        st.info("Chọn lần lượt từ trên xuống để xem chi tiết (Drill-down)")
         
-        # Level 1: Location (Region)
-        loc_opts = ["Tất cả"] + sorted(df['Location'].unique().tolist())
-        sel_loc = st.selectbox("1. Khu vực (Region):", loc_opts)
+        # Level 1: Location
+        locs = ["Tất cả"] + sorted(df['Location'].unique().tolist())
+        sel_loc = st.selectbox("1. Khu vực (Region):", locs)
         
-        # Filter Level 1
-        if sel_loc == "Tất cả":
-            df_lv1 = df
-            current_breakdown = "Location" # Nếu chọn tất cả vùng, biểu đồ sẽ so sánh các Vùng
-            drill_status = "Toàn quốc"
-        else:
-            df_lv1 = df[df['Location'] == sel_loc]
-            current_breakdown = "Công ty" # Nếu chọn 1 vùng, biểu đồ sẽ so sánh các Công ty trong vùng đó
-            drill_status = f"{sel_loc}"
-
-        # Level 2: Company (Entity) - Options depend on Level 1
-        comp_opts = ["Tất cả"] + sorted(df_lv1['Công ty'].unique().tolist())
-        sel_comp = st.selectbox("2. Công ty (Entity):", comp_opts)
+        # LỌC CẤP 1
+        df_l1 = df if sel_loc == "Tất cả" else df[df['Location'] == sel_loc]
         
-        # Filter Level 2
-        if sel_comp == "Tất cả":
-            df_lv2 = df_lv1
-            # Giữ nguyên breakdown là Công ty
-        else:
-            df_lv2 = df_lv1[df_lv1['Công ty'] == sel_comp]
-            current_breakdown = "BU" # Nếu chọn 1 Cty, biểu đồ so sánh các BU
-            drill_status += f" > {sel_comp}"
-
-        # Level 3: BU (Department) - Options depend on Level 2
-        bu_opts = ["Tất cả"] + sorted(df_lv2['BU'].unique().tolist())
-        sel_bu = st.selectbox("3. Phòng ban (BU):", bu_opts)
+        # Level 2: Company (Chỉ hiện Công ty thuộc Region đã chọn)
+        comps = ["Tất cả"] + sorted(df_l1['Công ty'].unique().tolist())
+        sel_comp = st.selectbox("2. Công ty (Entity):", comps)
         
-        # Filter Level 3
-        if sel_bu == "Tất cả":
-            df_final = df_lv2
-        else:
-            df_final = df_lv2[df_lv2['BU'] == sel_bu]
-            current_breakdown = "Người sử dụng xe" # Nếu chọn 1 BU, biểu đồ so sánh Nhân viên
-            drill_status += f" > {sel_bu}"
+        # LỌC CẤP 2
+        df_l2 = df_l1 if sel_comp == "Tất cả" else df_l1[df_l1['Công ty'] == sel_comp]
+        
+        # Level 3: BU (Chỉ hiện BU thuộc Công ty đã chọn)
+        bus = ["Tất cả"] + sorted(df_l2['BU'].unique().tolist())
+        sel_bu = st.selectbox("3. Phòng ban (BU):", bus)
+        
+        # LỌC CẤP 3
+        df_filtered = df_l2 if sel_bu == "Tất cả" else df_l2[df_l2['BU'] == sel_bu]
         
         st.markdown("---")
-        st.caption(f"Đang xem: **{len(df_final)}** chuyến")
+        st.caption(f"Đang xem: **{len(df_filtered)}** chuyến")
 
-    # --- BREADCRUMB & KPI ---
-    st.markdown(f"<div class='breadcrumb'>📍 Đang xem: {drill_status}</div>", unsafe_allow_html=True)
-
-    # Tính toán KPI
+    # --- KPI SECTION (CÓ TỶ LỆ HOÀN THÀNH) ---
+    # Tính toán
     total_cars = 21
-    # Logic xe thông minh theo vùng đang chọn
-    if sel_loc != "Tất cả":
-        if 'HCM' in str(sel_loc) or 'NAM' in str(sel_loc).upper(): total_cars = 16
-        elif 'HN' in str(sel_loc) or 'BAC' in str(sel_loc).upper(): total_cars = 5
+    if 'HCM' in sel_loc or 'NAM' in sel_loc.upper(): total_cars = 16
+    elif 'HN' in sel_loc or 'BAC' in sel_loc.upper(): total_cars = 5
     
     days = (df['Start'].max() - df['Start'].min()).days + 1 if not df.empty else 1
     cap = total_cars * max(days, 1) * 9
-    used = df_final['Duration'].sum()
+    used = df_filtered['Duration'].sum()
     occupancy = (used / cap * 100) if cap > 0 else 0
     
     # Status Rates
-    counts = df_final['Tình trạng đơn yêu cầu'].fillna('Unknown').value_counts()
-    total_trips = len(df_final)
+    counts = df_filtered['Tình trạng đơn yêu cầu'].fillna('Unknown').value_counts()
+    total = len(df_filtered)
     cancel = counts.get('CANCELED', 0) + counts.get('CANCELLED', 0)
     reject = counts.get('REJECTED_BY_ADMIN', 0)
-    completed = counts.get('CLOSED', 0) + counts.get('APPROVED', 0)
+    completed = counts.get('CLOSED', 0) + counts.get('APPROVED', 0) # Coi Approved là sắp hoàn thành
     
-    suc_rate = (completed / total_trips * 100) if total_trips > 0 else 0
-    can_rate = (cancel / total_trips * 100) if total_trips > 0 else 0
-    rej_rate = (reject / total_trips * 100) if total_trips > 0 else 0
+    suc_rate = (completed / total * 100) if total > 0 else 0
+    can_rate = (cancel / total * 100) if total > 0 else 0
+    rej_rate = (reject / total * 100) if total > 0 else 0
 
     # KPI UI
     k1, k2, k3, k4, k5 = st.columns(5)
-    k1.markdown(f"<div class='kpi-card'><div class='kpi-title'>Tổng Chuyến</div><div class='kpi-value'>{total_trips}</div></div>", unsafe_allow_html=True)
+    k1.markdown(f"<div class='kpi-card'><div class='kpi-title'>Tổng Chuyến</div><div class='kpi-value'>{total}</div></div>", unsafe_allow_html=True)
     k2.markdown(f"<div class='kpi-card'><div class='kpi-title'>Giờ Vận Hành</div><div class='kpi-value'>{used:,.0f}</div></div>", unsafe_allow_html=True)
     k3.markdown(f"<div class='kpi-card'><div class='kpi-title'>Occupancy</div><div class='kpi-value'>{occupancy:.1f}%</div><div class='kpi-sub'>Trên {total_cars} xe</div></div>", unsafe_allow_html=True)
     k4.markdown(f"<div class='kpi-card' style='border-left: 5px solid #107c10'><div class='kpi-title'>Hoàn Thành</div><div class='kpi-value' style='color:#107c10'>{suc_rate:.1f}%</div></div>", unsafe_allow_html=True)
     k5.markdown(f"<div class='kpi-card' style='border-left: 5px solid #d13438'><div class='kpi-title'>Hủy / Từ Chối</div><div class='kpi-value' style='color:#d13438'>{can_rate + rej_rate:.1f}%</div></div>", unsafe_allow_html=True)
 
-    # --- DYNAMIC CHART SECTION ---
-    st.markdown("---")
+    # --- DASHBOARD TABS ---
+    t1, t2, t3 = st.tabs(["📊 Phân Tích Đơn Vị (Drill-down)", "📈 Xu Hướng & Top", "📉 Chất Lượng Vận Hành"])
     
-    c_main, c_trend = st.columns([2, 1])
-    
-    with c_main:
-        # Tự động thay đổi tiêu đề và dữ liệu biểu đồ dựa trên cấp độ Drill-down
-        st.markdown(f"<div class='chart-header'>📊 Phân bổ theo {current_breakdown}</div>", unsafe_allow_html=True)
-        
-        # Prepare Data for Main Chart
-        df_agg = df_final[current_breakdown].value_counts().reset_index().head(15) # Top 15 items
-        df_agg.columns = [current_breakdown, 'Số chuyến']
-        
-        # Cho phép user chỉnh loại biểu đồ
-        chart_type = st.radio("Loại biểu đồ:", ["Cột (Bar)", "Tròn (Pie)"], horizontal=True, label_visibility="collapsed")
-        
-        if "Cột" in chart_type:
-            fig = px.bar(df_agg, x='Số chuyến', y=current_breakdown, orientation='h', 
-                         text='Số chuyến', color='Số chuyến', color_continuous_scale='Blues')
-            fig.update_traces(textposition='outside')
-            fig.update_layout(yaxis={'categoryorder':'total ascending'})
-        else:
-            fig = px.pie(df_agg, values='Số chuyến', names=current_breakdown, hole=0.4)
-            fig.update_traces(textinfo='percent+label')
-            
-        st.plotly_chart(fig, use_container_width=True)
-
-    with c_trend:
-        st.markdown(f"<div class='chart-header'>📈 Xu hướng (Tại {drill_status})</div>", unsafe_allow_html=True)
-        if 'Tháng' in df_final.columns:
-            df_trend = df_final.groupby('Tháng').size().reset_index(name='Số chuyến')
-            fig_trend = px.area(df_trend, x='Tháng', y='Số chuyến', markers=True)
-            fig_trend.update_layout(height=400)
-            st.plotly_chart(fig_trend, use_container_width=True)
-        else:
-            st.info("Chưa có dữ liệu tháng.")
-
-    # --- TOP LISTS ---
-    st.markdown("---")
-    st.markdown("<div class='chart-header'>🏆 Bảng Xếp Hạng Chi Tiết</div>", unsafe_allow_html=True)
-    
-    t1, t2, t3 = st.columns(3)
     with t1:
-        st.write("**Top Tài xế**")
-        if 'Tên tài xế' in df_final.columns:
-            top_d = df_final['Tên tài xế'].value_counts().head(10).reset_index(name='Số chuyến')
-            st.dataframe(top_d, use_container_width=True, hide_index=True)
-            
-    with t2:
-        st.write("**Top Người dùng**")
-        top_u = df_final['Người sử dụng xe'].value_counts().head(10).reset_index(name='Số chuyến')
-        st.dataframe(top_u, use_container_width=True, hide_index=True)
+        st.write("#### Phân tích theo Cấu trúc")
         
-    with t3:
-        st.write("**Chất lượng (Cancel/Reject)**")
-        df_st = counts.reset_index(name='Số lượng')
-        fig_st = px.pie(df_st, values='Số lượng', names='index', 
-                        color='index',
-                        color_discrete_map={'CLOSED':'#107c10', 'CANCELED':'#d13438', 'REJECTED_BY_ADMIN':'#a80000'})
-        st.plotly_chart(fig_st, use_container_width=True)
+        # LOGIC BIỂU ĐỒ THÔNG MINH (Drill-down Chart)
+        if sel_comp == "Tất cả":
+            # Level 1: Chưa chọn Cty -> Vẽ biểu đồ so sánh các Công ty
+            st.info(f"Đang hiển thị so sánh các Công ty tại {sel_loc}")
+            df_g = df_filtered['Công ty'].value_counts().reset_index()
+            df_g.columns = ['Công ty', 'Số chuyến']
+            fig = px.bar(df_g, x='Số chuyến', y='Công ty', orientation='h', 
+                         text='Số chuyến', title="Số chuyến theo Công ty",
+                         color='Số chuyến', color_continuous_scale='Blues')
+            fig.update_traces(textposition='outside')
+            st.plotly_chart(fig, use_container_width=True)
+            
+        elif sel_bu == "Tất cả":
+            # Level 2: Đã chọn Cty, chưa chọn BU -> Vẽ biểu đồ so sánh các BU
+            st.info(f"Đang hiển thị so sánh các Phòng ban của {sel_comp}")
+            df_g = df_filtered['BU'].value_counts().reset_index()
+            df_g.columns = ['Phòng ban', 'Số chuyến']
+            fig = px.bar(df_g, x='Số chuyến', y='Phòng ban', orientation='h', 
+                         text='Số chuyến', title=f"Phòng ban thuộc {sel_comp}",
+                         color='Số chuyến', color_continuous_scale='Teal')
+            fig.update_traces(textposition='outside')
+            st.plotly_chart(fig, use_container_width=True)
+            
+        else:
+            # Level 3: Đã chọn cụ thể BU -> Vẽ biểu đồ User trong BU đó
+            st.info(f"Đang hiển thị nhân sự của {sel_bu} ({sel_comp})")
+            df_g = df_filtered['Người sử dụng xe'].value_counts().head(10).reset_index()
+            df_g.columns = ['Nhân viên', 'Số chuyến']
+            fig = px.bar(df_g, x='Số chuyến', y='Nhân viên', orientation='h', 
+                         text='Số chuyến', title=f"Top nhân viên tại {sel_bu}",
+                         color='Số chuyến', color_continuous_scale='Purples')
+            fig.update_traces(textposition='outside')
+            st.plotly_chart(fig, use_container_width=True)
 
-    # --- PPTX DOWNLOAD ---
+    with t2:
+        c_trend, c_rank = st.columns([2, 1])
+        with c_trend:
+            st.write("#### Xu hướng theo tháng")
+            if 'Tháng' in df_filtered.columns:
+                df_trend = df_filtered.groupby('Tháng').size().reset_index(name='Số chuyến')
+                fig_line = px.line(df_trend, x='Tháng', y='Số chuyến', markers=True, text='Số chuyến')
+                fig_line.update_traces(textposition="top center") # SỐ LIỆU TRÊN LINE
+                st.plotly_chart(fig_line, use_container_width=True)
+        
+        with c_rank:
+            st.write("#### 🏆 Bảng Xếp Hạng")
+            tab_u, tab_d = st.tabs(["Người dùng", "Tài xế"])
+            with tab_u:
+                top_u = df_filtered['Người sử dụng xe'].value_counts().head(10).reset_index()
+                top_u.columns = ['Tên', 'Chuyến']; st.dataframe(top_u, use_container_width=True, hide_index=True)
+            with tab_d:
+                if 'Tên tài xế' in df_filtered.columns:
+                    top_d = df_filtered['Tên tài xế'].value_counts().head(10).reset_index()
+                    top_d.columns = ['Tên', 'Chuyến']; st.dataframe(top_d, use_container_width=True, hide_index=True)
+
+    with t3:
+        c1, c2 = st.columns(2)
+        with c1:
+            st.write("#### Tỷ lệ Trạng thái")
+            df_st = counts.reset_index()
+            df_st.columns = ['Status', 'Count']
+            # BIỂU ĐỒ TRÒN CÓ SỐ LIỆU
+            fig_pie = px.pie(df_st, values='Count', names='Status', hole=0.4, 
+                             color='Status',
+                             color_discrete_map={'CLOSED':'#107c10', 'CANCELED':'#d13438', 'REJECTED_BY_ADMIN':'#a80000'})
+            fig_pie.update_traces(textinfo='percent+label') 
+            st.plotly_chart(fig_pie, use_container_width=True)
+            
+        with c2:
+            st.write("#### Chi tiết Hủy/Từ chối")
+            df_bad = df_filtered[df_filtered['Tình trạng đơn yêu cầu'].isin(['CANCELED', 'CANCELLED', 'REJECTED_BY_ADMIN'])]
+            if not df_bad.empty:
+                st.dataframe(df_bad[['Ngày khởi hành', 'Người sử dụng xe', 'Công ty', 'Tình trạng đơn yêu cầu', 'Note']], use_container_width=True)
+            else:
+                st.success("Không có chuyến nào bị Hủy hoặc Từ chối trong bộ lọc này.")
+
+    # --- PPTX BUTTON ---
     st.markdown("---")
-    # Prepare export data based on current view
-    kpi_exp = {'trips': total_trips, 'hours': used, 'occupancy': occupancy, 'success_rate': suc_rate, 'cancel_rate': can_rate, 'reject_rate': rej_rate, 'last_month': df['Tháng'].max()}
-    
-    # Export Dynamic Chart Data
-    df_breakdown_exp = df_final[current_breakdown].value_counts().reset_index()
-    df_breakdown_exp.columns = [current_breakdown, 'Số chuyến']
-    
+    kpi_exp = {'trips': total, 'hours': used, 'occupancy': occupancy, 'success_rate': suc_rate, 'cancel_rate': can_rate, 'reject_rate': rej_rate, 'last_month': df['Tháng'].max()}
+    df_comp_exp = df_filtered['Công ty'].value_counts().reset_index(); df_comp_exp.columns=['Công ty', 'Số chuyến']
     df_status_exp = df_st
-    df_status_exp.columns = ['Trạng thái', 'Số lượng'] # Rename for safety
     
-    pptx_data = export_pptx(kpi_exp, df_status_exp, df_breakdown_exp, current_breakdown)
-    
-    st.download_button(f"📥 Tải Báo Cáo PPTX (Góc nhìn: {current_breakdown})", pptx_data, "Bao_Cao_Van_Hanh.pptx", "application/vnd.openxmlformats-officedocument.presentationml.presentation", type="primary")
+    pptx_data = export_pptx(kpi_exp, df_status_exp, df_comp_exp)
+    st.download_button("📥 Tải Báo Cáo PPTX (Kèm Biểu Đồ)", pptx_data, "Bao_Cao_Van_Hanh.pptx", "application/vnd.openxmlformats-officedocument.presentationml.presentation", type="primary")
 
 else:
     st.info("👋 Upload file Excel để bắt đầu.")
