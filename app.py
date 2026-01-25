@@ -9,6 +9,7 @@ from pptx.dml.color import RGBColor
 
 # --- 1. CẤU HÌNH TRANG & CSS ---
 st.set_page_config(page_title="Hệ Thống Quản Trị & Tối Ưu Hóa Đội Xe", page_icon="🚘", layout="wide")
+
 st.markdown("""
 <style>
     .block-container {padding-top: 1rem; padding-bottom: 3rem;}
@@ -65,7 +66,7 @@ st.markdown("""
         font-size: 11px;
         color: #adb5bd;
         font-style: italic;
-        margin-top: auto; /* Đẩy xuống đáy */
+        margin-top: auto;
         padding-top: 10px;
         border-top: 1px dashed #eee;
     }
@@ -320,88 +321,45 @@ if uploaded_file:
     suc_rate = (completed / total_trips * 100) if total_trips > 0 else 0
     fail_rate = (canceled / total_trips * 100) if total_trips > 0 else 0
 
-    # --- KPI UI NÂNG CẤP ---
+    # --- KPI UI (ĐÃ SỬA LỖI HIỂN THỊ HTML) ---
     cols = st.columns(5)
     
-    # Định nghĩa cấu trúc thẻ với Icon và Progress Bar logic
     cards = [
-        {
-            "title": "Tổng Chuyến", 
-            "val": f"{total_trips}", 
-            "sub": "∑ Đếm số dòng", 
-            "color": "#0078d4", 
-            "icon": "🚘",
-            "is_percent": False
-        },
-        {
-            "title": "Giờ Vận Hành", 
-            "val": f"{total_hours:,.0f}", 
-            "sub": "∑ (Giờ về - Giờ đi)", 
-            "color": "#0078d4", 
-            "icon": "⏱️",
-            "is_percent": False
-        },
-        {
-            "title": "Công Suất", 
-            "val": f"{occupancy:.1f}%", 
-            "sub": f"KPI Mục tiêu: >50%", 
-            "color": "#0078d4", 
-            "icon": "📉",
-            "is_percent": True,
-            "pct_val": min(occupancy, 100) # Max 100 cho thanh bar
-        },
-        {
-            "title": "Hoàn Thành", 
-            "val": f"{suc_rate:.1f}%", 
-            "sub": "Tỷ lệ thành công", 
-            "color": "#107c10", 
-            "icon": "✅",
-            "is_percent": True,
-            "pct_val": suc_rate
-        },
-        {
-            "title": "Hủy / Từ Chối", 
-            "val": f"{fail_rate:.1f}%", 
-            "sub": "Tỷ lệ thất bại", 
-            "color": "#d13438", 
-            "icon": "🚫",
-            "is_percent": True,
-            "pct_val": fail_rate
-        },
+        {"title": "Tổng Chuyến", "val": f"{total_trips}", "sub": "∑ Đếm số dòng", "color": "#0078d4", "icon": "🚘", "is_percent": False},
+        {"title": "Giờ Vận Hành", "val": f"{total_hours:,.0f}", "sub": "∑ (Giờ về - Giờ đi)", "color": "#0078d4", "icon": "⏱️", "is_percent": False},
+        {"title": "Công Suất", "val": f"{occupancy:.1f}%", "sub": f"KPI Mục tiêu: >50%", "color": "#0078d4", "icon": "📉", "is_percent": True, "pct_val": min(occupancy, 100)},
+        {"title": "Hoàn Thành", "val": f"{suc_rate:.1f}%", "sub": "Tỷ lệ thành công", "color": "#107c10", "icon": "✅", "is_percent": True, "pct_val": suc_rate},
+        {"title": "Hủy / Từ Chối", "val": f"{fail_rate:.1f}%", "sub": "Tỷ lệ thất bại", "color": "#d13438", "icon": "🚫", "is_percent": True, "pct_val": fail_rate},
     ]
 
     for col, card in zip(cols, cards):
-        # Tạo thanh progress bar nếu là chỉ số phần trăm
         progress_html = ""
         if card["is_percent"]:
-            progress_html = f"""
-            <div class="progress-bg">
-                <div class="progress-fill" style="width: {card['pct_val']}%; background-color: {card['color']}"></div>
-            </div>
-            """
-            
-        col.markdown(f"""
-        <div class="kpi-card" style="border-top: 4px solid {card['color']}">
-            <div class="kpi-header">
-                <span class="kpi-title" style="color: {card['color']}">{card['title']}</span>
-                <span class="kpi-icon">{card['icon']}</span>
-            </div>
-            <div class="kpi-value">{card['val']}</div>
-            {progress_html}
-            <div class="kpi-formula">{card['sub']}</div>
-        </div>
-        """, unsafe_allow_html=True)
+            progress_html = f"""<div class="progress-bg"><div class="progress-fill" style="width: {card['pct_val']}%; background-color: {card['color']}"></div></div>"""
+        
+        # FIX: HTML không được thụt dòng (indentation) để tránh Markdown hiểu nhầm là Code Block
+        kpi_html = f"""
+<div class="kpi-card" style="border-top: 4px solid {card['color']}">
+    <div class="kpi-header">
+        <span class="kpi-title" style="color: {card['color']}">{card['title']}</span>
+        <span class="kpi-icon">{card['icon']}</span>
+    </div>
+    <div class="kpi-value">{card['val']}</div>
+    {progress_html}
+    <div class="kpi-formula">{card['sub']}</div>
+</div>
+"""
+        col.markdown(kpi_html, unsafe_allow_html=True)
 
     # --- MAIN TABS ---
     t1, t2, t3 = st.tabs(["📊 Phân Tích Đơn Vị", "🏆 Bảng Xếp Hạng (Chi tiết)", "📉 Chất Lượng Vận Hành"])
     
-    chart_prefs = {} # Store user prefs for PPTX
+    chart_prefs = {}
     kind_map = {"Thanh ngang (Bar)": "bar", "Thanh dọc (Column)": "column", "Tròn (Pie)": "pie"}
 
     with t1:
         c1, c2 = st.columns([2, 1])
         with c1:
-            # Selector 1: Structure Chart
             chart_type_struct = st.selectbox("Kiểu biểu đồ Cấu trúc:", list(kind_map.keys()), index=0, key="c_struct")
             kind_struct = kind_map[chart_type_struct]
             chart_prefs['structure'] = kind_struct
@@ -419,7 +377,6 @@ if uploaded_file:
             st.plotly_chart(fig, use_container_width=True)
         
         with c2:
-            # Selector 2: Scope Chart
             chart_type_scope = st.selectbox("Kiểu biểu đồ Phạm vi:", list(kind_map.keys()), index=2, key="c_scope")
             kind_scope = kind_map[chart_type_scope]
             chart_prefs['scope'] = kind_scope
@@ -434,7 +391,6 @@ if uploaded_file:
                 st.plotly_chart(fig_s, use_container_width=True)
 
     with t2:
-        # XỬ LÝ DỮ LIỆU NÂNG CAO CHO TAB 2
         df_user_stats = df_filtered.groupby('Người sử dụng xe').agg(
             Số_chuyến=('Start', 'count'),
             Công_ty=('Công ty', lambda x: x.mode()[0] if not x.mode().empty else 'Unknown')
@@ -452,51 +408,38 @@ if uploaded_file:
 
         c_u, c_d = st.columns(2)
         with c_u:
-            # Selector 3: Top User Chart
             type_u = st.selectbox("Biểu đồ Top User:", list(kind_map.keys()), index=0, key="c_user")
             kind_u = kind_map[type_u]
             chart_prefs['top_user'] = kind_u
             
             st.write("##### 🥇 Top User (Kèm Công ty)")
-            
-            # --- [ĐÃ SỬA] THÊM LỆNH VẼ BIỂU ĐỒ VÀO ĐÂY ---
             if kind_u == "bar": 
                 fig_u = px.bar(df_user_stats.head(10), x='Số_chuyến', y='Người sử dụng xe', orientation='h', text='Số_chuyến', hover_data=['Công_ty'], color_discrete_sequence=['#8764b8'])
             elif kind_u == "column": 
                 fig_u = px.bar(df_user_stats.head(10), x='Người sử dụng xe', y='Số_chuyến', text='Số_chuyến', hover_data=['Công_ty'], color_discrete_sequence=['#8764b8'])
             else: 
                 fig_u = px.pie(df_user_stats.head(10), values='Số_chuyến', names='Người sử dụng xe', hover_data=['Công_ty'])
-            
             st.plotly_chart(fig_u, use_container_width=True)
-            # ----------------------------------------------
-            
             st.dataframe(df_user_stats.head(10), use_container_width=True, hide_index=True)
 
         with c_d:
-            # Selector 4: Top Driver Chart
             type_d = st.selectbox("Biểu đồ Top Driver:", list(kind_map.keys()), index=0, key="c_driver")
             kind_d = kind_map[type_d]
             chart_prefs['top_driver'] = kind_d
             
             st.write("##### 🚘 Top Driver (Kèm Tuyến phổ biến)")
-            
-            # --- [ĐÃ SỬA] THÊM LỆNH VẼ BIỂU ĐỒ VÀO ĐÂY ---
             if kind_d == "bar": 
                 fig_d = px.bar(df_driver_stats.head(10), x='Số_chuyến', y='Tên tài xế', orientation='h', text='Số_chuyến', hover_data=['Tuyến_hay_chạy'], color_discrete_sequence=['#00cc6a'])
             elif kind_d == "column": 
                 fig_d = px.bar(df_driver_stats.head(10), x='Tên tài xế', y='Số_chuyến', text='Số_chuyến', hover_data=['Tuyến_hay_chạy'], color_discrete_sequence=['#00cc6a'])
             else: 
                 fig_d = px.pie(df_driver_stats.head(10), values='Số_chuyến', names='Tên tài xế', hover_data=['Tuyến_hay_chạy'])
-            
             st.plotly_chart(fig_d, use_container_width=True)
-            # ----------------------------------------------
-
             st.dataframe(df_driver_stats.head(10), use_container_width=True, hide_index=True)
 
     with t3:
         c_status_left, c_status_right = st.columns(2)
         with c_status_left:
-             # Selector 5: Status Chart
             chart_type_status = st.selectbox("Kiểu biểu đồ Trạng thái:", list(kind_map.keys()), index=2, key="c_status")
             kind_st = kind_map[chart_type_status]
             chart_prefs['status'] = kind_st
@@ -550,10 +493,8 @@ if uploaded_file:
             'last_month': last_month_str
         }
         
-        # Prepare Data for Export
         df_status_exp = counts.reset_index(); df_status_exp.columns = ['Trạng thái', 'Số lượng']
         
-        # Logic Chart 1 (Structure)
         if sel_comp == "Tất cả": 
             df_comp_exp = df_filtered['Công ty'].value_counts().reset_index(); df_comp_exp.columns=['Category', 'Value']
         elif sel_bu == "Tất cả":
@@ -561,13 +502,11 @@ if uploaded_file:
         else:
             df_comp_exp = df_filtered['Người sử dụng xe'].value_counts().head(10).reset_index(); df_comp_exp.columns=['Category', 'Value']
 
-        # Scope Data
         if 'Phạm Vi' in df_filtered.columns:
             df_scope_exp = df_filtered['Phạm Vi'].value_counts().reset_index()
             df_scope_exp.columns = ['Phạm vi', 'Số lượng']
         else: df_scope_exp = pd.DataFrame(columns=['Phạm vi', 'Số lượng'])
 
-        # Bad Trips
         df_bad_exp = pd.DataFrame()
         if not bad_trips.empty:
             df_bad_exp = bad_trips.copy()
