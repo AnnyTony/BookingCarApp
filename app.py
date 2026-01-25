@@ -8,7 +8,7 @@ from pptx.util import Inches, Pt
 from pptx.dml.color import RGBColor
 
 # --- 1. CẤU HÌNH TRANG & CSS ---
-st.set_page_config(page_title="Fleet Management Pro", page_icon="🚘", layout="wide")
+st.set_page_config(page_title="Phước Minh - Hệ Thống Quản Trị & Tối Ưu Hóa Đội Xe", page_icon="🚘", layout="wide")
 
 st.markdown("""
 <style>
