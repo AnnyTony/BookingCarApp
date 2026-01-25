@@ -320,20 +320,74 @@ if uploaded_file:
     suc_rate = (completed / total_trips * 100) if total_trips > 0 else 0
     fail_rate = (canceled / total_trips * 100) if total_trips > 0 else 0
 
+    # --- KPI UI NÂNG CẤP ---
     cols = st.columns(5)
+    
+    # Định nghĩa cấu trúc thẻ với Icon và Progress Bar logic
     cards = [
-        {"title": "Tổng Chuyến", "val": f"{total_trips}", "sub": "∑ Đếm số dòng", "color": "#0078d4"},
-        {"title": "Giờ Vận Hành", "val": f"{total_hours:,.0f}", "sub": "∑ (Giờ về - Giờ đi)", "color": "#0078d4"},
-        {"title": "Công Suất (Occupancy)", "val": f"{occupancy:.1f}%", "sub": f"Tổng Giờ / ({total_cars}xe * {days}ngày * 9h)", "color": "#0078d4"},
-        {"title": "Hoàn Thành", "val": f"{suc_rate:.1f}%", "sub": "Số đơn xong / Tổng đơn", "color": "#107c10"},
-        {"title": "Hủy / Từ Chối", "val": f"{fail_rate:.1f}%", "sub": "Số đơn hủy / Tổng đơn", "color": "#d13438"},
+        {
+            "title": "Tổng Chuyến", 
+            "val": f"{total_trips}", 
+            "sub": "∑ Đếm số dòng", 
+            "color": "#0078d4", 
+            "icon": "🚘",
+            "is_percent": False
+        },
+        {
+            "title": "Giờ Vận Hành", 
+            "val": f"{total_hours:,.0f}", 
+            "sub": "∑ (Giờ về - Giờ đi)", 
+            "color": "#0078d4", 
+            "icon": "⏱️",
+            "is_percent": False
+        },
+        {
+            "title": "Công Suất", 
+            "val": f"{occupancy:.1f}%", 
+            "sub": f"KPI Mục tiêu: >50%", 
+            "color": "#0078d4", 
+            "icon": "📉",
+            "is_percent": True,
+            "pct_val": min(occupancy, 100) # Max 100 cho thanh bar
+        },
+        {
+            "title": "Hoàn Thành", 
+            "val": f"{suc_rate:.1f}%", 
+            "sub": "Tỷ lệ thành công", 
+            "color": "#107c10", 
+            "icon": "✅",
+            "is_percent": True,
+            "pct_val": suc_rate
+        },
+        {
+            "title": "Hủy / Từ Chối", 
+            "val": f"{fail_rate:.1f}%", 
+            "sub": "Tỷ lệ thất bại", 
+            "color": "#d13438", 
+            "icon": "🚫",
+            "is_percent": True,
+            "pct_val": fail_rate
+        },
     ]
 
     for col, card in zip(cols, cards):
+        # Tạo thanh progress bar nếu là chỉ số phần trăm
+        progress_html = ""
+        if card["is_percent"]:
+            progress_html = f"""
+            <div class="progress-bg">
+                <div class="progress-fill" style="width: {card['pct_val']}%; background-color: {card['color']}"></div>
+            </div>
+            """
+            
         col.markdown(f"""
-        <div class="kpi-card" style="border-left: 5px solid {card['color']}">
-            <div class="kpi-title">{card['title']}</div>
-            <div class="kpi-value" style="color: {card['color']}">{card['val']}</div>
+        <div class="kpi-card" style="border-top: 4px solid {card['color']}">
+            <div class="kpi-header">
+                <span class="kpi-title" style="color: {card['color']}">{card['title']}</span>
+                <span class="kpi-icon">{card['icon']}</span>
+            </div>
+            <div class="kpi-value">{card['val']}</div>
+            {progress_html}
             <div class="kpi-formula">{card['sub']}</div>
         </div>
         """, unsafe_allow_html=True)
