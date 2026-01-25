@@ -63,7 +63,7 @@ st.markdown("""
     }
 
     .kpi-formula {
-        font-size: 11px;
+        font-size: 12px; /* Tăng size lên xíu cho dễ đọc */
         color: #adb5bd;
         font-style: italic;
         margin-top: auto;
@@ -78,6 +78,7 @@ st.markdown("""
         height: 6px;
         width: 100%;
         margin-top: 5px;
+        margin-bottom: 8px; /* Thêm khoảng cách với formula */
         overflow: hidden;
     }
     
@@ -321,7 +322,7 @@ if uploaded_file:
     suc_rate = (completed / total_trips * 100) if total_trips > 0 else 0
     fail_rate = (canceled / total_trips * 100) if total_trips > 0 else 0
 
-    # --- KPI UI (ĐÃ SỬA LỖI HIỂN THỊ HTML) ---
+    # --- KPI UI (FIX HTML INDENTATION ERROR) ---
     cols = st.columns(5)
     
     cards = [
@@ -333,23 +334,26 @@ if uploaded_file:
     ]
 
     for col, card in zip(cols, cards):
+        # Progress Bar Logic
         progress_html = ""
         if card["is_percent"]:
             progress_html = f"""<div class="progress-bg"><div class="progress-fill" style="width: {card['pct_val']}%; background-color: {card['color']}"></div></div>"""
-        
-        # FIX: HTML không được thụt dòng (indentation) để tránh Markdown hiểu nhầm là Code Block
-        kpi_html = f"""
-<div class="kpi-card" style="border-top: 4px solid {card['color']}">
-    <div class="kpi-header">
-        <span class="kpi-title" style="color: {card['color']}">{card['title']}</span>
-        <span class="kpi-icon">{card['icon']}</span>
-    </div>
-    <div class="kpi-value">{card['val']}</div>
-    {progress_html}
-    <div class="kpi-formula">{card['sub']}</div>
+        else:
+            # IMPORTANT: For non-percent cards, use a spacer div to keep alignment but invisible
+            progress_html = """<div style="height: 19px;"></div>"""
+
+        # IMPORTANT: Use a single f-string without indentation to prevent Markdown code block issues
+        html_code = f"""<div class="kpi-card" style="border-top: 4px solid {card['color']}">
+<div class="kpi-header">
+<span class="kpi-title" style="color: {card['color']}">{card['title']}</span>
+<span class="kpi-icon">{card['icon']}</span>
 </div>
-"""
-        col.markdown(kpi_html, unsafe_allow_html=True)
+<div class="kpi-value">{card['val']}</div>
+{progress_html}
+<div class="kpi-formula">{card['sub']}</div>
+</div>"""
+        
+        col.markdown(html_code, unsafe_allow_html=True)
 
     # --- MAIN TABS ---
     t1, t2, t3 = st.tabs(["📊 Phân Tích Đơn Vị", "🏆 Bảng Xếp Hạng (Chi tiết)", "📉 Chất Lượng Vận Hành"])
