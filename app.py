@@ -26,7 +26,7 @@ st.markdown("""
         display: flex;
         flex-direction: column;
         justify-content: space-between;
-        min-height: 160px; /* Đảm bảo độ cao đồng đều */
+        min-height: 160px;
     }
     
     .kpi-card:hover {
@@ -67,7 +67,7 @@ st.markdown("""
         font-size: 12px;
         color: #888;
         font-style: italic;
-        margin-top: auto; /* Đẩy xuống đáy */
+        margin-top: auto; 
         padding-top: 10px;
         border-top: 1px dashed #eee;
     }
@@ -323,26 +323,65 @@ if uploaded_file:
     suc_rate = (completed / total_trips * 100) if total_trips > 0 else 0
     fail_rate = (canceled / total_trips * 100) if total_trips > 0 else 0
 
-    # --- KPI UI (SỬA LỖI HIỂN THỊ HTML) ---
+    # --- KPI UI (RESTORE FORMULAS) ---
     cols = st.columns(5)
     
     cards = [
-        {"title": "Tổng Chuyến", "val": f"{total_trips}", "sub": "∑ Đếm số dòng", "color": "#0078d4", "icon": "🚘", "is_percent": False},
-        {"title": "Giờ Vận Hành", "val": f"{total_hours:,.0f}", "sub": "∑ (Giờ về - Giờ đi)", "color": "#0078d4", "icon": "⏱️", "is_percent": False},
-        {"title": "Công Suất", "val": f"{occupancy:.1f}%", "sub": f"KPI Mục tiêu: >50%", "color": "#0078d4", "icon": "📉", "is_percent": True, "pct_val": min(occupancy, 100)},
-        {"title": "Hoàn Thành", "val": f"{suc_rate:.1f}%", "sub": "Tỷ lệ thành công", "color": "#107c10", "icon": "✅", "is_percent": True, "pct_val": suc_rate},
-        {"title": "Hủy / Từ Chối", "val": f"{fail_rate:.1f}%", "sub": "Tỷ lệ thất bại", "color": "#d13438", "icon": "🚫", "is_percent": True, "pct_val": fail_rate},
+        {
+            "title": "Tổng Chuyến", 
+            "val": f"{total_trips}", 
+            "sub": "∑ Đếm số dòng", 
+            "color": "#0078d4", 
+            "icon": "🚘", 
+            "is_percent": False
+        },
+        {
+            "title": "Giờ Vận Hành", 
+            "val": f"{total_hours:,.0f}", 
+            "sub": "∑ (Giờ về - Giờ đi)", 
+            "color": "#0078d4", 
+            "icon": "⏱️", 
+            "is_percent": False
+        },
+        {
+            "title": "Công Suất", 
+            "val": f"{occupancy:.1f}%", 
+            # --- [ĐÃ KHÔI PHỤC] CÔNG THỨC CHI TIẾT ---
+            "sub": f"Tổng Giờ / ({total_cars}xe * {days}ngày * 9h)", 
+            "color": "#0078d4", 
+            "icon": "📉", 
+            "is_percent": True, 
+            "pct_val": min(occupancy, 100)
+        },
+        {
+            "title": "Hoàn Thành", 
+            "val": f"{suc_rate:.1f}%", 
+            # --- [ĐÃ KHÔI PHỤC] CÔNG THỨC CHI TIẾT ---
+            "sub": "Số đơn xong / Tổng đơn", 
+            "color": "#107c10", 
+            "icon": "✅", 
+            "is_percent": True, 
+            "pct_val": suc_rate
+        },
+        {
+            "title": "Hủy / Từ Chối", 
+            "val": f"{fail_rate:.1f}%", 
+            # --- [ĐÃ KHÔI PHỤC] CÔNG THỨC CHI TIẾT ---
+            "sub": "Số đơn hủy / Tổng đơn", 
+            "color": "#d13438", 
+            "icon": "🚫", 
+            "is_percent": True, 
+            "pct_val": fail_rate
+        },
     ]
 
     for col, card in zip(cols, cards):
-        # Progress logic
+        progress_html = ""
         if card["is_percent"]:
             progress_html = f'<div class="progress-bg"><div class="progress-fill" style="width: {card["pct_val"]}%; background-color: {card["color"]}"></div></div>'
         else:
-            # Tạo khoảng trắng ảo để các ô cao bằng nhau
             progress_html = '<div style="height: 24px;"></div>' 
 
-        # QUAN TRỌNG: Viết HTML sát lề trái, không thụt dòng trong string
         html_code = f"""<div class="kpi-card" style="border-top: 4px solid {card['color']}">
 <div class="kpi-header">
 <span class="kpi-title" style="color: {card['color']}">{card['title']}</span>
