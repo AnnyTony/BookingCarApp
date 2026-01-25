@@ -75,18 +75,22 @@ def load_data_final(file):
 
         # 1. Xử lý Master Data (Driver)
         driver_cars_map = {}
-        duplicates_check = []
+        duplicates_check = [] # List các xe bị trùng
         
         if not df_driver.empty and 'Biển số xe' in df_driver.columns:
             cc_col = next((c for c in df_driver.columns if 'cost' in c.lower()), None)
             
+            # Kiểm tra trùng lặp trước khi drop_duplicates
+            raw_plates = df_driver['Biển số xe'].dropna()
+            # Tìm các biển số xuất hiện > 1 lần
+            dup_series = raw_plates[raw_plates.duplicated(keep=False)]
+            if not dup_series.empty:
+                duplicates_check = dup_series.unique().tolist()
+
             for idx, row in df_driver.iterrows():
                 raw_plate = row['Biển số xe']
                 if is_valid_plate(raw_plate):
                     clean_plate = normalize_plate(raw_plate)
-                    if clean_plate in driver_cars_map:
-                        duplicates_check.append(raw_plate)
-                    
                     driver_cars_map[clean_plate] = {
                         'Raw': raw_plate,
                         'Driver_Name': row.get('Tên tài xế', 'Unknown'),
@@ -177,7 +181,7 @@ def get_chart_img(data, x, y, kind='bar', title='', color='#0078d4'):
     img = BytesIO(); plt.savefig(img, format='png', dpi=120); plt.close(); img.seek(0)
     return img
 
-# --- 4. EXPORT PPTX (ĐÃ SỬA LỖI ARGUMENT) ---
+# --- 4. EXPORT PPTX ---
 def export_pptx(kpi, df_comp, df_status, top_users, top_drivers, df_bad_trips, selected_options, chart_prefs, df_scope):
     prs = Presentation()
     
@@ -195,12 +199,10 @@ def export_pptx(kpi, df_comp, df_status, top_users, top_drivers, df_bad_trips, s
         tb_s = slide.shapes.add_textbox(left + Inches(0.1), top + height - Inches(0.4), width - Inches(0.2), Inches(0.3))
         p_s = tb_s.text_frame.paragraphs[0]; p_s.text = sub; p_s.font.size = Pt(9); p_s.font.italic = True; p_s.font.color.rgb = RGBColor(150, 150, 150)
 
-    # Slide 1
     slide = prs.slides.add_slide(prs.slide_layouts[0])
     slide.shapes.title.text = "BÁO CÁO VẬN HÀNH ĐỘI XE"
     slide.placeholders[1].text = f"Cập nhật: {kpi['last_month']}"
     
-    # Slide 2: KPI
     slide = prs.slides.add_slide(prs.slide_layouts[5]); slide.shapes.title.text = "TỔNG QUAN HIỆU SUẤT"
     add_kpi_shape(slide, Inches(0.5), Inches(2.5), Inches(1.8), Inches(1.5), "TỔNG CHUYẾN", f"{kpi['trips']}", "Số chuyến", RGBColor(0, 120, 212))
     add_kpi_shape(slide, Inches(2.4), Inches(2.5), Inches(1.8), Inches(1.5), "GIỜ VẬN HÀNH", f"{kpi['hours']:,.0f}", "Tổng giờ", RGBColor(0, 120, 212))
@@ -208,26 +210,25 @@ def export_pptx(kpi, df_comp, df_status, top_users, top_drivers, df_bad_trips, s
     add_kpi_shape(slide, Inches(6.2), Inches(2.5), Inches(1.8), Inches(1.5), "HOÀN THÀNH", f"{kpi['success_rate']:.1f}%", "Tỷ lệ OK", RGBColor(16, 124, 16))
     add_kpi_shape(slide, Inches(8.1), Inches(2.5), Inches(1.8), Inches(1.5), "HỦY/TỪ CHỐI", f"{kpi['cancel_rate'] + kpi['reject_rate']:.1f}%", "Tỷ lệ Fail", RGBColor(209, 52, 56))
 
-    # Slide 3: Charts
-    slide = prs.slides.add_slide(prs.slide_layouts[5]); slide.shapes.title.text = "PHÂN TÍCH CẤU TRÚC SỬ DỤNG"
-    if not df_comp.empty:
-        img1 = get_chart_img(df_comp.head(8), 'Value', 'Category', kind=chart_prefs.get('structure', 'bar'), title='Top Đơn Vị')
-        slide.shapes.add_picture(img1, Inches(0.5), Inches(1.8), Inches(4.5), Inches(3.5))
-    if not df_scope.empty:
-        img2 = get_chart_img(df_scope, 'Số lượng', 'Phạm vi', kind=chart_prefs.get('scope', 'pie'), title='Phạm Vi')
-        slide.shapes.add_picture(img2, Inches(5.2), Inches(1.8), Inches(4.5), Inches(3.5))
+    if "Biểu đồ Tổng quan" in selected_options:
+        slide = prs.slides.add_slide(prs.slide_layouts[5]); slide.shapes.title.text = "PHÂN TÍCH CẤU TRÚC SỬ DỤNG"
+        if not df_comp.empty:
+            img1 = get_chart_img(df_comp.head(8), 'Value', 'Category', kind=chart_prefs.get('structure', 'bar'), title='Top Đơn Vị')
+            slide.shapes.add_picture(img1, Inches(0.5), Inches(1.8), Inches(4.5), Inches(3.5))
+        if not df_scope.empty:
+            img2 = get_chart_img(df_scope, 'Số lượng', 'Phạm vi', kind=chart_prefs.get('scope', 'pie'), title='Phạm Vi')
+            slide.shapes.add_picture(img2, Inches(5.2), Inches(1.8), Inches(4.5), Inches(3.5))
 
-    # Slide 4: Ranking
-    slide = prs.slides.add_slide(prs.slide_layouts[5]); slide.shapes.title.text = "BẢNG XẾP HẠNG HOẠT ĐỘNG"
-    if not top_users.empty:
-        img_u = get_chart_img(top_users.head(8), 'Số chuyến', 'Người sử dụng xe', kind=chart_prefs.get('top_user', 'bar'), title='Top Users', color='#8764b8')
-        slide.shapes.add_picture(img_u, Inches(0.5), Inches(1.8), Inches(4.5), Inches(3.5))
-    if not top_drivers.empty:
-        img_d = get_chart_img(top_drivers.head(8), 'Số chuyến', 'Tên tài xế', kind=chart_prefs.get('top_driver', 'bar'), title='Top Drivers', color='#00cc6a')
-        slide.shapes.add_picture(img_d, Inches(5.2), Inches(1.8), Inches(4.5), Inches(3.5))
+    if "Bảng Xếp Hạng (Top User/Driver)" in selected_options:
+        slide = prs.slides.add_slide(prs.slide_layouts[5]); slide.shapes.title.text = "BẢNG XẾP HẠNG HOẠT ĐỘNG"
+        if not top_users.empty:
+            img_u = get_chart_img(top_users.head(8), 'Số chuyến', 'Người sử dụng xe', kind=chart_prefs.get('top_user', 'bar'), title='Top Users', color='#8764b8')
+            slide.shapes.add_picture(img_u, Inches(0.5), Inches(1.8), Inches(4.5), Inches(3.5))
+        if not top_drivers.empty:
+            img_d = get_chart_img(top_drivers.head(8), 'Số chuyến', 'Tên tài xế', kind=chart_prefs.get('top_driver', 'bar'), title='Top Drivers', color='#00cc6a')
+            slide.shapes.add_picture(img_d, Inches(5.2), Inches(1.8), Inches(4.5), Inches(3.5))
 
-    # Slide 5: Bad Trips
-    if not df_bad_trips.empty:
+    if "Danh sách Hủy/Từ chối" in selected_options:
         slide = prs.slides.add_slide(prs.slide_layouts[5]); slide.shapes.title.text = "CHI TIẾT ĐƠN HỦY / TỪ CHỐI"
         # --- SAFE COLUMNS (Đã thêm 'Lý do' và 'Note') ---
         wanted_cols = ['Start_Str', 'User', 'Status', 'Note', 'Lý do']
@@ -242,7 +243,7 @@ def export_pptx(kpi, df_comp, df_status, top_users, top_drivers, df_bad_trips, s
             for i, row in enumerate(df_bad_trips.head(9).itertuples(), start=1):
                 for j, col_name in enumerate(avail_cols):
                     val = getattr(row, col_name, "")
-                    table.cell(i, j).text = str(val)[:30] # Cắt ngắn nếu dài
+                    table.cell(i, j).text = str(val)[:30]
 
     out = BytesIO(); prs.save(out); out.seek(0); return out
 
@@ -304,6 +305,9 @@ if uploaded_file:
     else:
         occupancy_text = "N/A"
         occupancy_pct = 0
+        cap = 0
+        capacity_cars = 0
+        days = 0
 
     counts = df_filtered['Tình trạng đơn yêu cầu'].fillna('Unknown').value_counts()
     suc_rate = ((counts.get('CLOSED', 0) + counts.get('APPROVED', 0)) / total_trips * 100) if total_trips > 0 else 0
@@ -314,13 +318,15 @@ if uploaded_file:
     cards = [
         {"title": "Tổng Chuyến", "val": f"{total_trips}", "sub": "∑ Đếm số dòng", "color": "#0078d4", "icon": "🚘", "is_percent": False},
         {"title": "Giờ Vận Hành", "val": f"{total_hours:,.0f}", "sub": "∑ (Giờ về - Giờ đi)", "color": "#0078d4", "icon": "⏱️", "is_percent": False},
-        {"title": "Công Suất (Nội bộ)", "val": occupancy_text, "sub": f"Chỉ tính trên xe Cty", "color": "#0078d4", "icon": "📉", "is_percent": True, "pct_val": min(occupancy_pct, 100)},
+        # --- [ĐÃ KHÔI PHỤC] CÔNG THỨC CHI TIẾT ---
+        {"title": "Công Suất (Nội bộ)", "val": occupancy_text, "sub": f"Giờ / ({capacity_cars}xe * {days}ngày * 8h)", "color": "#0078d4", "icon": "📉", "is_percent": True, "pct_val": min(occupancy_pct, 100)},
         {"title": "Hoàn Thành", "val": f"{suc_rate:.1f}%", "sub": "Tỷ lệ thành công", "color": "#107c10", "icon": "✅", "is_percent": True, "pct_val": suc_rate},
         {"title": "Hủy / Từ Chối", "val": f"{fail_rate:.1f}%", "sub": "Tỷ lệ thất bại", "color": "#d13438", "icon": "🚫", "is_percent": True, "pct_val": fail_rate},
     ]
     for col, card in zip(cols, cards):
         progress_html = f'<div class="progress-bg"><div class="progress-fill" style="width: {card["pct_val"]}%; background-color: {card["color"]}"></div></div>' if card["is_percent"] else '<div style="height: 24px;"></div>'
-        col.markdown(f"""<div class="kpi-card" style="border-top: 4px solid {card['color']}"><div class="kpi-header"><span class="kpi-title" style="color: {card['color']}">{card['title']}</span><span class="kpi-icon">{card['icon']}</span></div><div class="kpi-value">{card['val']}</div>{progress_html}<div class="kpi-formula">{card['sub']}</div></div>""", unsafe_allow_html=True)
+        html_code = f"""<div class="kpi-card" style="border-top: 4px solid {card['color']}"><div class="kpi-header"><span class="kpi-title" style="color: {card['color']}">{card['title']}</span><span class="kpi-icon">{card['icon']}</span></div><div class="kpi-value">{card['val']}</div>{progress_html}<div class="kpi-formula">{card['sub']}</div></div>"""
+        col.markdown(html_code, unsafe_allow_html=True)
 
     # --- TABS ---
     t1, t2, t3, t4 = st.tabs(["📊 Phân Tích", "🏆 Bảng Xếp Hạng", "📉 Chất Lượng", "⚙️ Đối Soát & Kiểm Tra"])
@@ -354,6 +360,15 @@ if uploaded_file:
                 elif chart_prefs['scope'] == "bar": fig_s = px.bar(df_sc, x='Số lượng', y='Phạm vi', orientation='h', text='Số lượng')
                 else: fig_s = px.bar(df_sc, x='Phạm vi', y='Số lượng', text='Số lượng')
                 st.plotly_chart(fig_s, use_container_width=True)
+                
+                # --- [ĐÃ KHÔI PHỤC] CHECK BẢNG PHẠM VI (YÊU CẦU 3) ---
+                with st.expander("🔍 Kiểm tra chi tiết Phạm Vi & Phân Loại Xe"):
+                    st.write("Dữ liệu Lộ trình, Phân loại Tỉnh/Thành và Loại Xe:")
+                    # Thêm cột Phân Loại Xe vào bảng chi tiết
+                    cols_to_show = ['Ngày khởi hành', 'Biển số xe', 'Lộ trình', 'Phạm Vi', 'Phân Loại Xe']
+                    # Lấy những cột có thực trong dữ liệu
+                    valid_cols = [c for c in cols_to_show if c in df_filtered.columns]
+                    st.dataframe(df_filtered[valid_cols], use_container_width=True)
 
     with t2:
         c_u, c_d = st.columns(2)
@@ -397,21 +412,33 @@ if uploaded_file:
     with t4:
         st.subheader("⚙️ Chi Tiết Đối Soát Dữ Liệu")
         
+        # 1. Check Trùng (YÊU CẦU 2 - GIẢI THÍCH DỄ HIỂU)
         with st.expander("🚨 Kiểm tra Trùng lặp trong danh sách Driver", expanded=True):
             if report_info['duplicates_list']:
-                st.error(f"Phát hiện {len(report_info['duplicates_list'])} biển số bị nhập trùng trong file Driver!")
-                st.write(report_info['duplicates_list'])
+                st.error(f"⚠️ CẢNH BÁO: Có {len(report_info['duplicates_list'])} biển số xuất hiện nhiều lần trong file Driver!")
+                
+                # Tạo bảng giải thích rõ ràng
+                dup_df = pd.DataFrame(report_info['duplicates_list'], columns=["Biển số bị trùng"])
+                dup_df["Giải thích"] = "Biển số này có 2 dòng trở lên trong file Excel (Driver)."
+                dup_df["Hành động của App"] = "Chỉ lấy dòng cuối cùng để tính toán."
+                
+                st.table(dup_df)
+                st.info("💡 Lời khuyên: Hãy kiểm tra lại file Excel 'Driver', sheet 'Danh sách tài xế' xem có nhập dư dòng nào cho các xe trên không.")
             else:
-                st.success("Dữ liệu Driver sạch, không có biển số trùng.")
+                st.success("✅ Dữ liệu Driver sạch, không có biển số trùng.")
 
+        # 2. Check Vãng lai
         with st.expander(f"🚗 Danh sách Xe Vãng Lai"):
             vang_lai = df_filtered[df_filtered['Phân Loại Xe'] == 'Xe Vãng lai']['Biển số xe'].unique()
             st.write(f"Tìm thấy **{len(vang_lai)}** xe vãng lai trong bộ lọc hiện tại:")
+            st.caption("Đây là các xe có chạy chuyến (trong file Booking) nhưng KHÔNG tìm thấy trong danh sách tài xế chính thức (file Driver).")
             st.table(pd.DataFrame(vang_lai, columns=['Biển số Vãng lai']))
 
+        # 3. Check Nội bộ
         with st.expander(f"🚙 Danh sách Xe Nội Bộ"):
             noi_bo = df_filtered[df_filtered['Phân Loại Xe'] == 'Xe Nội bộ']['Biển số xe'].unique()
             st.write(f"Tìm thấy **{len(noi_bo)}** xe nội bộ hoạt động:")
+            st.caption("Đây là các xe chính thức, có tên trong danh sách Driver.")
             st.table(pd.DataFrame(noi_bo, columns=['Biển số Nội bộ']))
 
     # --- PPTX ---
