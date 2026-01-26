@@ -30,7 +30,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# --- 2. HÀM XỬ LÝ DỮ LIỆU (LOGIC: BOOKING LÀ CHÍNH) ---
+# --- 2. HÀM XỬ LÝ DỮ LIỆU ---
 @st.cache_data
 def load_data_final(file):
     try:
@@ -42,7 +42,6 @@ def load_data_final(file):
         
         if not sheet_booking: return "❌ Không tìm thấy sheet 'Booking car'.", pd.DataFrame(), {}
 
-        # Hàm đọc header thông minh (như cũ)
         def read_sheet_smart(sheet_name, key_col):
             df_preview = xl.parse(sheet_name, header=None, nrows=15)
             header_idx = -1
@@ -53,17 +52,16 @@ def load_data_final(file):
             if header_idx == -1: return pd.DataFrame()
             return xl.parse(sheet_name, header=header_idx)
 
-        # 1. LOAD DỮ LIỆU
-        df_bk = read_sheet_smart(sheet_booking, 'ngày khởi hành') # Bảng Chính
-        df_driver = read_sheet_smart(sheet_driver, 'biển số xe')  # Bảng Tham Chiếu
-        df_cbnv = read_sheet_smart(sheet_cbnv, 'full name')      # Bảng Tham Chiếu
+        # LOAD DATA
+        df_bk = read_sheet_smart(sheet_booking, 'ngày khởi hành')
+        df_driver = read_sheet_smart(sheet_driver, 'biển số xe')
+        df_cbnv = read_sheet_smart(sheet_cbnv, 'full name')
 
-        # Chuẩn hóa tên cột
         df_bk.columns = df_bk.columns.str.strip()
         if not df_driver.empty: df_driver.columns = df_driver.columns.str.strip()
         if not df_cbnv.empty: df_cbnv.columns = df_cbnv.columns.str.strip()
 
-        # --- HÀM CHUẨN HÓA BIỂN SỐ (Xóa dấu chấm, khoảng trắng) ---
+        # NORMALIZE FUNCTION
         def normalize_plate(plate):
             if not isinstance(plate, str): return ""
             return re.sub(r'[^A-Z0-9]', '', plate.upper())
@@ -73,55 +71,46 @@ def load_data_final(file):
             if len(s) > 15 or len(s) < 5 or ":" in s or "BIỂN SỐ" in s: return False
             return any(char.isdigit() for char in s)
 
-        # 2. XỬ LÝ DRIVER (Tạo danh mục tham chiếu)
-        internal_cars_dict = {} # Lưu {Biển_Sạch: {Info}}
-        
+        # 1. PROCESSING DRIVER (MASTER)
+        internal_cars_dict = {} 
+        duplicates_check = []
         if not df_driver.empty and 'Biển số xe' in df_driver.columns:
             cc_col = next((c for c in df_driver.columns if 'cost' in c.lower()), None)
             for idx, row in df_driver.iterrows():
                 raw = row['Biển số xe']
                 if is_valid_plate(raw):
                     clean = normalize_plate(raw)
+                    if clean in internal_cars_dict: duplicates_check.append(raw)
                     internal_cars_dict[clean] = {
                         'Driver_Name': row.get('Tên tài xế', ''),
                         'Cost_Center': row.get(cc_col, '') if cc_col else ''
                     }
 
-        # 3. XỬ LÝ BOOKING (Đây là dataframe chính df_final)
+        # 2. PROCESSING BOOKING (TRANSACTION)
         df_final = df_bk.copy()
+        if 'Biển số xe' not in df_final.columns: return "Lỗi: Thiếu cột Biển số xe", pd.DataFrame(), {}
         
-        # Tạo cột Biển_Clean để đối chiếu
-        if 'Biển số xe' in df_final.columns:
-            df_final['Biển_Clean'] = df_final['Biển số xe'].apply(normalize_plate)
-        else:
-            return "Lỗi: Sheet Booking không có cột 'Biển số xe'", pd.DataFrame(), {}
+        df_final['Biển_Clean'] = df_final['Biển số xe'].apply(normalize_plate)
 
-        # 3.1. Phân loại xe & Điền thông tin thiếu từ Driver
-        def enrich_data(row):
+        # Logic Phân loại & Enrich
+        def enrich_row(row):
             clean = row['Biển_Clean']
+            is_internal = clean in internal_cars_dict
             
-            # Logic 1: Phân loại
-            loai_xe = "Xe Nội bộ" if clean in internal_cars_dict else "Xe Vãng lai"
+            # Phân loại
+            loai_xe = "Xe Nội bộ" if is_internal else "Xe Vãng lai"
             
-            # Logic 2: Điền Cost Center (Ưu tiên Driver > Booking)
-            cc = row.get('Cost center', '')
-            if pd.isna(cc) or cc == '':
-                if clean in internal_cars_dict: cc = internal_cars_dict[clean]['Cost_Center']
+            # Tên tài xế
+            drv = row.get('Tên tài xế', '')
+            if pd.isna(drv) or drv == '':
+                drv = internal_cars_dict[clean]['Driver_Name'] if is_internal else 'Unknown'
             
-            # Logic 3: Điền Tên tài xế (Nếu Booking thiếu)
-            driver_name = row.get('Tên tài xế', '')
-            if pd.isna(driver_name) or driver_name == '':
-                if clean in internal_cars_dict: driver_name = internal_cars_dict[clean]['Driver_Name']
-            
-            return pd.Series([loai_xe, cc, driver_name])
+            return pd.Series([loai_xe, drv])
 
-        df_final[['Phân Loại Xe', 'Cost Center Final', 'Tên tài xế Final']] = df_final.apply(enrich_data, axis=1)
-        
-        # Cập nhật lại cột chính để hiển thị
+        df_final[['Phân Loại Xe', 'Tên tài xế Final']] = df_final.apply(enrich_row, axis=1)
         df_final['Tên tài xế'] = df_final['Tên tài xế Final'].fillna('Unknown')
-        df_final['Cost center'] = df_final['Cost Center Final']
 
-        # 3.2. Merge CBNV (Thông tin người dùng)
+        # 3. MERGE CBNV
         if not df_cbnv.empty:
             col_map = {}
             for c in df_cbnv.columns:
@@ -129,27 +118,24 @@ def load_data_final(file):
                 if 'công ty' in str(c).lower(): col_map[c] = 'Công ty'
                 if 'bu' in str(c).lower(): col_map[c] = 'BU'
                 if 'location' in str(c).lower(): col_map[c] = 'Location'
-            
-            # Chỉ lấy các cột cần thiết
-            cols_needed = [k for k in col_map.keys() if k in df_cbnv.columns]
-            df_cbnv_clean = df_cbnv[cols_needed].rename(columns=col_map).drop_duplicates(subset=['Full Name'])
-            
-            if 'Full Name' in df_cbnv_clean.columns:
-                df_final = df_final.merge(df_cbnv_clean, left_on='Người sử dụng xe', right_on='Full Name', how='left')
+            available_cols = [c for c in col_map.keys() if c in df_cbnv.columns]
+            df_cbnv = df_cbnv[available_cols].rename(columns=col_map)
+            if 'Full Name' in df_cbnv.columns:
+                df_cbnv = df_cbnv.drop_duplicates(subset=['Full Name'], keep='first')
+                df_final = df_final.merge(df_cbnv, left_on='Người sử dụng xe', right_on='Full Name', how='left')
 
-        # Fillna cho các cột hành chính
         for c in ['Công ty', 'BU', 'Location']:
             if c not in df_final.columns: df_final[c] = 'Unknown'
             else: df_final[c] = df_final[c].fillna('Unknown').astype(str)
 
-        # 3.3. Xử lý thời gian
+        # 4. TIME CALCULATION
         df_final['Start'] = pd.to_datetime(df_final['Ngày khởi hành'].astype(str) + ' ' + df_final['Giờ khởi hành'].astype(str), errors='coerce')
         df_final['End'] = pd.to_datetime(df_final['Ngày khởi hành'].astype(str) + ' ' + df_final['Giờ kết thúc'].astype(str), errors='coerce')
         df_final.loc[df_final['End'] < df_final['Start'], 'End'] += pd.Timedelta(days=1)
         df_final['Duration'] = (df_final['End'] - df_final['Start']).dt.total_seconds() / 3600
         df_final['Tháng'] = df_final['Start'].dt.strftime('%Y-%m')
 
-        # 3.4. Logic Phạm vi (Tỉnh/Thành)
+        # 5. SCOPE LOGIC
         def check_scope(r):
             s = str(r).lower()
             provinces = ['bình dương', 'đồng nai', 'long an', 'bà rịa', 'vũng tàu', 'tây ninh', 'bình phước', 'tiền giang', 'bến tre', 'cần thơ', 'vĩnh long', 'an giang', 'bắc ninh', 'hưng yên', 'hải dương', 'hải phòng', 'vĩnh phúc', 'hà nam', 'nam định', 'thái bình', 'thái nguyên', 'hòa bình', 'bắc giang', 'phú thọ', 'thanh hóa', 'nghệ an']
@@ -158,13 +144,15 @@ def load_data_final(file):
         
         df_final['Phạm Vi'] = df_final['Lộ trình'].apply(check_scope) if 'Lộ trình' in df_final.columns else 'Unknown'
 
-        # Đếm tổng số xe nội bộ (Dùng cho mẫu số KPI Occupancy)
-        total_internal_fleet = len(internal_cars_dict)
+        report_info = {
+            'driver_cars_count': len(internal_cars_dict),
+            'duplicates_list': duplicates_check
+        }
 
-        return df_final, total_internal_fleet
-    except Exception as e: return f"Lỗi: {str(e)}", pd.DataFrame(), 0
+        return df_final, report_info
+    except Exception as e: return f"Lỗi: {str(e)}", {}
 
-# --- 3. HÀM TẠO ẢNH CHO PPTX ---
+# --- 3. CHART EXPORT ---
 def get_chart_img(data, x, y, kind='bar', title='', color='#0078d4'):
     plt.figure(figsize=(7, 4.5))
     if x not in data.columns or y not in data.columns:
@@ -182,7 +170,7 @@ def get_chart_img(data, x, y, kind='bar', title='', color='#0078d4'):
     img = BytesIO(); plt.savefig(img, format='png', dpi=120); plt.close(); img.seek(0)
     return img
 
-# --- 4. EXPORT PPTX ---
+# --- 4. PPTX EXPORT ---
 def export_pptx(kpi, df_comp, df_status, top_users, top_drivers, df_bad_trips, selected_options, chart_prefs, df_scope):
     prs = Presentation()
     
@@ -202,8 +190,7 @@ def export_pptx(kpi, df_comp, df_status, top_users, top_drivers, df_bad_trips, s
 
     # Slide 1
     slide = prs.slides.add_slide(prs.slide_layouts[0])
-    slide.shapes.title.text = "BÁO CÁO VẬN HÀNH ĐỘI XE"
-    slide.placeholders[1].text = f"Cập nhật: {kpi['last_month']}"
+    slide.shapes.title.text = "BÁO CÁO VẬN HÀNH ĐỘI XE"; slide.placeholders[1].text = f"Cập nhật: {kpi['last_month']}"
     
     # Slide 2: KPI
     slide = prs.slides.add_slide(prs.slide_layouts[5]); slide.shapes.title.text = "TỔNG QUAN HIỆU SUẤT"
@@ -214,30 +201,30 @@ def export_pptx(kpi, df_comp, df_status, top_users, top_drivers, df_bad_trips, s
     add_kpi_shape(slide, Inches(8.1), Inches(2.5), Inches(1.8), Inches(1.5), "HỦY/TỪ CHỐI", f"{kpi['cancel_rate'] + kpi['reject_rate']:.1f}%", "Tỷ lệ Fail", RGBColor(209, 52, 56))
 
     # Slide 3: Charts
-    slide = prs.slides.add_slide(prs.slide_layouts[5]); slide.shapes.title.text = "PHÂN TÍCH CẤU TRÚC SỬ DỤNG"
-    if not df_comp.empty:
-        img1 = get_chart_img(df_comp.head(8), 'Value', 'Category', kind=chart_prefs.get('structure', 'bar'), title='Top Đơn Vị')
-        slide.shapes.add_picture(img1, Inches(0.5), Inches(1.8), Inches(4.5), Inches(3.5))
-    if not df_scope.empty:
-        img2 = get_chart_img(df_scope, 'Số lượng', 'Phạm vi', kind=chart_prefs.get('scope', 'pie'), title='Phạm Vi')
-        slide.shapes.add_picture(img2, Inches(5.2), Inches(1.8), Inches(4.5), Inches(3.5))
+    if "Biểu đồ Tổng quan" in selected_options:
+        slide = prs.slides.add_slide(prs.slide_layouts[5]); slide.shapes.title.text = "PHÂN TÍCH CẤU TRÚC SỬ DỤNG"
+        if not df_comp.empty:
+            img1 = get_chart_img(df_comp.head(8), 'Value', 'Category', kind=chart_prefs.get('structure', 'bar'), title='Top Đơn Vị')
+            slide.shapes.add_picture(img1, Inches(0.5), Inches(1.8), Inches(4.5), Inches(3.5))
+        if not df_scope.empty:
+            img2 = get_chart_img(df_scope, 'Số lượng', 'Phạm vi', kind=chart_prefs.get('scope', 'pie'), title='Phạm Vi')
+            slide.shapes.add_picture(img2, Inches(5.2), Inches(1.8), Inches(4.5), Inches(3.5))
 
     # Slide 4: Ranking
-    slide = prs.slides.add_slide(prs.slide_layouts[5]); slide.shapes.title.text = "BẢNG XẾP HẠNG HOẠT ĐỘNG"
-    if not top_users.empty:
-        img_u = get_chart_img(top_users.head(8), 'Số chuyến', 'Người sử dụng xe', kind=chart_prefs.get('top_user', 'bar'), title='Top Users', color='#8764b8')
-        slide.shapes.add_picture(img_u, Inches(0.5), Inches(1.8), Inches(4.5), Inches(3.5))
-    if not top_drivers.empty:
-        img_d = get_chart_img(top_drivers.head(8), 'Số chuyến', 'Tên tài xế', kind=chart_prefs.get('top_driver', 'bar'), title='Top Drivers', color='#00cc6a')
-        slide.shapes.add_picture(img_d, Inches(5.2), Inches(1.8), Inches(4.5), Inches(3.5))
+    if "Bảng Xếp Hạng (Top User/Driver)" in selected_options:
+        slide = prs.slides.add_slide(prs.slide_layouts[5]); slide.shapes.title.text = "BẢNG XẾP HẠNG HOẠT ĐỘNG"
+        if not top_users.empty:
+            img_u = get_chart_img(top_users.head(8), 'Số chuyến', 'Người sử dụng xe', kind=chart_prefs.get('top_user', 'bar'), title='Top Users', color='#8764b8')
+            slide.shapes.add_picture(img_u, Inches(0.5), Inches(1.8), Inches(4.5), Inches(3.5))
+        if not top_drivers.empty:
+            img_d = get_chart_img(top_drivers.head(8), 'Số chuyến', 'Tên tài xế', kind=chart_prefs.get('top_driver', 'bar'), title='Top Drivers', color='#00cc6a')
+            slide.shapes.add_picture(img_d, Inches(5.2), Inches(1.8), Inches(4.5), Inches(3.5))
 
     # Slide 5: Bad Trips
-    if not df_bad_trips.empty:
+    if "Danh sách Hủy/Từ chối" in selected_options:
         slide = prs.slides.add_slide(prs.slide_layouts[5]); slide.shapes.title.text = "CHI TIẾT ĐƠN HỦY / TỪ CHỐI"
-        # Safe columns
-        wanted_cols = ['Start_Str', 'User', 'Status', 'Note', 'Lý do']
-        avail_cols = [c for c in wanted_cols if c in df_bad_trips.columns]
-        
+        cols_safe = ['Start_Str', 'User', 'Status', 'Note', 'Lý do']
+        avail_cols = [c for c in cols_safe if c in df_bad_trips.columns]
         rows, cols = min(len(df_bad_trips)+1, 10), len(avail_cols)
         if cols > 0:
             table = slide.shapes.add_table(rows, cols, Inches(0.5), Inches(1.5), Inches(9), Inches(0.8)).table
@@ -256,20 +243,17 @@ st.title("📊 Phước Minh - Hệ Thống Quản Trị & Tối Ưu Hóa Đội
 uploaded_file = st.file_uploader("Upload Excel", type=['xlsx'], label_visibility="collapsed")
 
 if uploaded_file:
-    df, total_internal_fleet = load_data_final(uploaded_file)
+    df, report_info = load_data_final(uploaded_file)
     if isinstance(df, str): st.error(df); st.stop()
     
-    # --- SIDEBAR ---
+    # SIDEBAR
     with st.sidebar:
         st.header("🗂️ Bộ Lọc Dữ Liệu")
-        # Lấy list Loại Xe thực tế có trong dữ liệu
-        avail_types = df['Phân Loại Xe'].unique().tolist()
-        type_filter = st.multiselect("Loại Xe:", avail_types, default=avail_types)
+        type_filter = st.multiselect("Loại Xe:", ["Xe Nội bộ", "Xe Vãng lai"], default=["Xe Nội bộ", "Xe Vãng lai"])
         
         min_date, max_date = df['Start'].min().date(), df['Start'].max().date()
         date_range = st.date_input("Thời gian:", (min_date, max_date), min_value=min_date, max_value=max_date)
         
-        # Áp dụng bộ lọc
         df_filtered = df.copy()
         if len(date_range) == 2:
             df_filtered = df_filtered[(df_filtered['Start'].dt.date >= date_range[0]) & (df_filtered['Start'].dt.date <= date_range[1])]
@@ -291,31 +275,33 @@ if uploaded_file:
 
     if df_filtered.empty: st.warning("Không có dữ liệu."); st.stop()
 
-    # --- KPI CALCULATION ---
+    # --- KPI LOGIC (ĐÃ FIX ĐỘNG) ---
     total_trips = len(df_filtered)
     total_hours = df_filtered['Duration'].sum()
     
-    # 1. TÍNH OCCUPANCY (Logic: Chỉ tính cho xe Nội bộ)
-    # Lấy dữ liệu xe nội bộ trong vùng filter
-    internal_data = df_filtered[df_filtered['Phân Loại Xe'] == 'Xe Nội bộ']
-    hours_internal = internal_data['Duration'].sum()
+    # Logic: Occupancy CHỈ TÍNH cho XE NỘI BỘ khi nó được chọn
+    # Nếu chọn "Xe Vãng lai" -> Occupancy = N/A
+    # Nếu chọn "Cả hai" -> Occupancy = Giờ nội bộ / (Xe nội bộ * 8h)
     
-    # Xác định Mẫu số (Capacity): Số xe nội bộ
-    if 'Xe Nội bộ' in type_filter:
-        # Nếu đang filter khu vực -> Đếm số xe nội bộ hoạt động ở khu vực đó
-        # Nếu chọn Tất cả -> Lấy tổng fleet từ Driver Sheet
-        if sel_loc == "Tất cả" and sel_comp == "Tất cả":
-            fleet_count = total_internal_fleet
-        else:
-            fleet_count = internal_data['Biển_Clean'].nunique()
-            if fleet_count == 0: fleet_count = 1 # Tránh chia 0
-            
-        days_count = max((df_filtered['Start'].max() - df_filtered['Start'].min()).days + 1, 1)
-        occupancy_cap = fleet_count * days_count * 8
+    if "Xe Nội bộ" in type_filter:
+        # Tử số: Giờ chạy của xe nội bộ TRONG FILTER HIỆN TẠI
+        internal_hours_in_view = df_filtered[df_filtered['Phân Loại Xe'] == 'Xe Nội bộ']['Duration'].sum()
         
-        occupancy_pct = (hours_internal / occupancy_cap * 100) if occupancy_cap > 0 else 0
+        # Mẫu số: Số lượng xe nội bộ (Capacity)
+        # Nếu filter khu vực -> đếm xe nội bộ ở khu vực đó
+        # Nếu "Tất cả" -> lấy tổng xe nội bộ từ Driver sheet
+        if sel_loc == "Tất cả" and sel_comp == "Tất cả":
+            fleet_count = report_info['driver_cars_count']
+        else:
+            fleet_count = df_filtered[df_filtered['Phân Loại Xe'] == 'Xe Nội bộ']['Biển_Clean'].nunique()
+            if fleet_count == 0: fleet_count = 1
+            
+        days_in_view = max((df_filtered['Start'].max() - df_filtered['Start'].min()).days + 1, 1)
+        occupancy_cap = fleet_count * days_in_view * 8
+        
+        occupancy_pct = (internal_hours_in_view / occupancy_cap * 100) if occupancy_cap > 0 else 0
         occupancy_text = f"{occupancy_pct:.1f}%"
-        occupancy_sub = f"Giờ nội bộ / ({fleet_count}xe * {days_count}ngày * 8h)"
+        occupancy_sub = f"Giờ nội bộ / ({fleet_count}xe * {days_in_view}ngày * 8h)"
     else:
         occupancy_text = "N/A"
         occupancy_pct = 0
@@ -339,7 +325,7 @@ if uploaded_file:
         col.markdown(f"""<div class="kpi-card" style="border-top: 4px solid {card['color']}"><div class="kpi-header"><span class="kpi-title" style="color: {card['color']}">{card['title']}</span><span class="kpi-icon">{card['icon']}</span></div><div class="kpi-value">{card['val']}</div>{progress_html}<div class="kpi-formula">{card['sub']}</div></div>""", unsafe_allow_html=True)
 
     # --- TABS ---
-    t1, t2, t3, t4 = st.tabs(["📊 Phân Tích", "🏆 Bảng Xếp Hạng", "📉 Chất Lượng", "⚙️ Đối Soát & Kiểm Tra"])
+    t1, t2, t3, t4 = st.tabs(["📊 Phân Tích", "🏆 Bảng Xếp Hạng", "📉 Chất Lượng", "⚙️ Chi Tiết & Đối Soát"])
     
     chart_prefs = {} 
     kind_map = {"Thanh ngang (Bar)": "bar", "Thanh dọc (Column)": "column", "Tròn (Pie)": "pie"}
@@ -371,9 +357,10 @@ if uploaded_file:
                 else: fig_s = px.bar(df_sc, x='Phạm vi', y='Số lượng', text='Số lượng')
                 st.plotly_chart(fig_s, use_container_width=True)
                 
-                with st.expander("🔍 Xem Bảng Phân Tích Phạm Vi (Chi tiết)"):
-                    scope_breakdown = df_filtered.groupby(['Phạm Vi', 'Phân Loại Xe']).size().reset_index(name='Số chuyến')
-                    st.dataframe(scope_breakdown, use_container_width=True)
+                # --- [ĐÃ KHÔI PHỤC] CHECK BẢNG PHẠM VI (CHI TIẾT) ---
+                with st.expander("🔍 Xem Bảng Chi Tiết Lộ Trình (Từng chuyến)"):
+                    cols_scope = ['Ngày khởi hành', 'Biển số xe', 'Tên tài xế', 'Lộ trình', 'Phạm Vi', 'Phân Loại Xe']
+                    st.dataframe(df_filtered[cols_scope], use_container_width=True)
 
     with t2:
         c_u, c_d = st.columns(2)
@@ -414,30 +401,27 @@ if uploaded_file:
             st.success("Không có chuyến nào bị hủy trong giai đoạn này.")
 
     with t4:
-        st.subheader("⚙️ Đối Soát & Kiểm Tra Dữ Liệu")
+        st.subheader("⚙️ Đối Soát Dữ Liệu (Source: Booking)")
         
-        # Check Occupancy
-        with st.expander("📊 Kiểm tra công thức Occupancy", expanded=True):
-            st.write("Dưới đây là chi tiết các biến số đang dùng để tính công suất:")
-            col_kpi1, col_kpi2 = st.columns(2)
-            with col_kpi1:
-                st.info(f"**Tử số (Hours Used):** {hours_internal:,.0f} giờ")
-                st.caption("(Tổng giờ chạy của các chuyến xe được phân loại là 'Xe Nội bộ')")
-            with col_kpi2:
-                st.info(f"**Mẫu số (Capacity):** {occupancy_cap:,.0f} giờ")
-                st.caption(f"= {fleet_count} xe (Inventory) * {days_count} ngày * 8h")
-        
-        # Check Vãng lai
-        with st.expander(f"🚗 Danh sách Xe Vãng Lai ({df_filtered[df_filtered['Phân Loại Xe'] == 'Xe Vãng lai']['Biển số xe'].nunique()} xe)"):
-            st.write("Các xe này có trong Booking nhưng KHÔNG có trong danh sách Driver (thuê ngoài):")
-            vang_lai = df_filtered[df_filtered['Phân Loại Xe'] == 'Xe Vãng lai'][['Biển số xe', 'Tên tài xế']].drop_duplicates()
-            st.dataframe(vang_lai, use_container_width=True)
+        # 1. Check Trùng
+        with st.expander("🚨 Kiểm tra file Driver", expanded=False):
+            if report_info['duplicates_list']:
+                st.error(f"Cảnh báo: Có {len(report_info['duplicates_list'])} biển số bị trùng dòng trong file Driver.")
+                st.write(report_info['duplicates_list'])
+            else:
+                st.success("File Driver sạch (Không trùng lặp).")
 
-        # Check Nội bộ
-        with st.expander(f"🚙 Danh sách Xe Nội Bộ ({df_filtered[df_filtered['Phân Loại Xe'] == 'Xe Nội bộ']['Biển số xe'].nunique()} xe)"):
-            st.write("Các xe này có trong danh sách Driver và đang hoạt động:")
-            noi_bo = df_filtered[df_filtered['Phân Loại Xe'] == 'Xe Nội bộ'][['Biển số xe', 'Tên tài xế']].drop_duplicates()
-            st.dataframe(noi_bo, use_container_width=True)
+        # 2. Xe Vãng lai
+        with st.expander(f"🚗 Danh sách Xe Vãng Lai ({df_filtered[df_filtered['Phân Loại Xe'] == 'Xe Vãng lai']['Biển số xe'].nunique()} xe)"):
+            st.info("Là xe CÓ trong Booking nhưng KHÔNG có trong danh sách Driver.")
+            vl = df_filtered[df_filtered['Phân Loại Xe'] == 'Xe Vãng lai'][['Biển số xe', 'Tên tài xế']].drop_duplicates()
+            st.dataframe(vl, use_container_width=True)
+
+        # 3. Xe Nội bộ
+        with st.expander(f"🚙 Danh sách Xe Nội Bộ ({df_filtered[df_filtered['Phân Loại Xe'] == 'Xe Nội bộ']['Biển số xe'].nunique()} xe hoạt động)"):
+            st.info("Là xe CÓ trong Booking VÀ CÓ trong danh sách Driver.")
+            nb = df_filtered[df_filtered['Phân Loại Xe'] == 'Xe Nội bộ'][['Biển số xe', 'Tên tài xế']].drop_duplicates()
+            st.dataframe(nb, use_container_width=True)
 
     # --- PPTX ---
     st.divider()
