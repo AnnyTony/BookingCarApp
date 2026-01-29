@@ -120,7 +120,13 @@ with st.sidebar:
         depts = sorted(df['Dept'].dropna().unique())
         sel_dept = st.multiselect("Bộ Phận", depts, default=depts)
         
-        mask = df['Tháng'].isin(sel_month) & df['Dept'].isin(sel_dept)
+        # Logic lọc
+        mask = pd.Series(True, index=df.index)
+        if sel_month:
+            mask &= df['Tháng'].isin(sel_month)
+        if sel_dept:
+            mask &= df['Dept'].isin(sel_dept)
+            
         df_sub = df[mask]
     else:
         df_sub = pd.DataFrame()
@@ -173,11 +179,12 @@ if not df_sub.empty:
         with c_left:
             st.markdown('<div class="dashboard-card">', unsafe_allow_html=True)
             st.markdown("#### 🍩 Tỷ Lệ Lộ Trình (Nội vs Ngoại Tỉnh)")
-            route_stats = df_sub['Route_Type'].value_counts().reset_index()
-            route_stats.columns = ['Loại', 'Số chuyến']
-            fig_route = px.pie(route_stats, names='Loại', values='Số chuyến', hole=0.6, 
-                               color_discrete_sequence=['#10b981', '#f59e0b'])
-            st.plotly_chart(fig_route, use_container_width=True)
+            if 'Route_Type' in df_sub.columns:
+                route_stats = df_sub['Route_Type'].value_counts().reset_index()
+                route_stats.columns = ['Loại', 'Số chuyến']
+                fig_route = px.pie(route_stats, names='Loại', values='Số chuyến', hole=0.6, 
+                                   color_discrete_sequence=['#10b981', '#f59e0b'])
+                st.plotly_chart(fig_route, use_container_width=True)
             st.markdown('</div>', unsafe_allow_html=True)
             
         with c_right:
@@ -185,16 +192,25 @@ if not df_sub.empty:
             st.markdown("#### 🎯 Phân Tích Hiệu Suất Xe (Scatter)")
             # Gom theo xe
             car_perf = df_sub.groupby('Car')[['Cost', 'Km']].sum().reset_index()
-            # Tính Cost/Km
-            car_perf['AVG'] = car_perf['Cost'] / car_perf['Km']
             
-            fig_scatter = px.scatter(car_perf, x='Km', y='Cost', color='Car', size='Km',
-                                     title="Tương quan: Đi nhiều (Phải) vs Tốn tiền (Trên)",
-                                     hover_data=['AVG'])
-            # Kẻ đường trung bình
-            fig_scatter.add_shape(type="line", x0=0, y0=0, x1=car_perf['Km'].max(), y1=car_perf['Cost'].max(),
-                                  line=dict(color="Gray", dash="dash"))
-            st.plotly_chart(fig_scatter, use_container_width=True)
+            # --- FIX LỖI: Lọc bỏ các xe có Km <= 0 để tránh lỗi 'size' và chia cho 0 ---
+            car_perf_clean = car_perf[car_perf['Km'] > 0].copy()
+            
+            if not car_perf_clean.empty:
+                # Tính Cost/Km
+                car_perf_clean['AVG'] = car_perf_clean['Cost'] / car_perf_clean['Km']
+                
+                fig_scatter = px.scatter(car_perf_clean, x='Km', y='Cost', color='Car', size='Km',
+                                         title="Tương quan: Đi nhiều (Phải) vs Tốn tiền (Trên)",
+                                         hover_data={'AVG': ':.0f', 'Cost': ':.0f', 'Km': ':.0f', 'Car': False})
+                
+                # Kẻ đường trung bình
+                fig_scatter.add_shape(type="line", x0=0, y0=0, x1=car_perf_clean['Km'].max(), y1=car_perf_clean['Cost'].max(),
+                                      line=dict(color="Gray", dash="dash"))
+                st.plotly_chart(fig_scatter, use_container_width=True)
+            else:
+                st.info("Không có dữ liệu xe hoạt động (Km > 0) để vẽ biểu đồ này.")
+                
             st.markdown('</div>', unsafe_allow_html=True)
 
     # === TAB 2: TOP CHARTS ===
@@ -222,9 +238,12 @@ if not df_sub.empty:
             st.subheader("⛽ Top Xe Tiêu Thụ Nhiên Liệu (VNĐ)")
             if 'Fuel' in df_sub.columns:
                 top_fuel = df_sub.groupby('Car')['Fuel'].sum().nlargest(10).reset_index().sort_values('Fuel')
-                fig_fuel = px.bar(top_fuel, x='Fuel', y='Car', orientation='h', text_auto='.2s', 
-                                  color='Fuel', color_continuous_scale='Reds')
-                st.plotly_chart(fig_fuel, use_container_width=True)
+                # Lọc bỏ giá trị âm hoặc 0 để vẽ đẹp hơn
+                top_fuel = top_fuel[top_fuel['Fuel'] > 0]
+                if not top_fuel.empty:
+                    fig_fuel = px.bar(top_fuel, x='Fuel', y='Car', orientation='h', text_auto='.2s', 
+                                      color='Fuel', color_continuous_scale='Reds')
+                    st.plotly_chart(fig_fuel, use_container_width=True)
             else:
                 st.warning("Không có dữ liệu nhiên liệu")
             st.markdown('</div>', unsafe_allow_html=True)
@@ -236,6 +255,7 @@ if not df_sub.empty:
             st.markdown('<div class="dashboard-card">', unsafe_allow_html=True)
             st.subheader("🚗 Top Xe Hoạt Động (Km)")
             top_km = df_sub.groupby('Car')['Km'].sum().nlargest(10).reset_index().sort_values('Km')
+            top_km = top_km[top_km['Km'] > 0]
             fig_km = px.bar(top_km, x='Km', y='Car', orientation='h', text_auto='.2s', 
                               color='Km', color_continuous_scale='Teal')
             st.plotly_chart(fig_km, use_container_width=True)
