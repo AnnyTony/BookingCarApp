@@ -34,17 +34,16 @@ st.markdown("""
 @st.cache_data
 def load_data_final(file):
     try:
-        # 1. Đọc file (Hỗ trợ cả CSV và Excel)
+        # 1. Đọc file
         if file.name.endswith('.csv'):
             df = pd.read_csv(file)
         else:
-            # Data mới header ở dòng 0, nhưng ta đọc an toàn
             df = pd.read_excel(file, engine='openpyxl')
 
-        # 2. Chuẩn hóa tên cột (xóa khoảng trắng, xuống dòng)
+        # 2. Chuẩn hóa tên cột (quan trọng để bắt được chữ "Cost \ncenter")
         df.columns = [str(c).strip().replace('\n', ' ') for c in df.columns]
 
-        # 3. MAPPING TÊN CỘT (Quan Trọng: File Mới -> Biến Code Cần)
+        # 3. MAPPING CỘT (Thêm Cost Center và Tổng chi phí)
         rename_map = {
             'Ngày Tháng Năm': 'Ngày khởi hành',
             'Biển số xe': 'Biển số xe',
@@ -56,82 +55,59 @@ def load_data_final(file):
             'Công Ty': 'Công ty',
             'Bộ phận': 'BU',
             'Site': 'Location',
-            'Loại nhiên liệu': 'Loại nhiên liệu'
+            'Cost center': 'Cost Center',      # <--- MỚI
+            'Tổng chi phí': 'Chi phí'          # <--- MỚI
         }
-        # Chỉ đổi tên những cột tồn tại
         df = df.rename(columns=rename_map)
 
-        # 4. DATA CLEANING & BYPASS "DÒNG TIÊU ĐỀ PHỤ"
+        # 4. LÀM SẠCH DỮ LIỆU CƠ BẢN
         if 'Ngày khởi hành' in df.columns:
-            # Ép kiểu ngày tháng, lỗi -> NaT
             df['Ngày khởi hành'] = pd.to_datetime(df['Ngày khởi hành'], errors='coerce')
-            
-            # XÓA DÒNG RÁC: Chỉ giữ lại dòng có Ngày hợp lệ (Đây là bước bypass dòng tiêu đề phụ/dòng trống)
-            df = df.dropna(subset=['Ngày khởi hành'])
+            df = df.dropna(subset=['Ngày khởi hành']) # Bỏ dòng tiêu đề thừa
 
-            # SỬA LỖI NĂM (Ví dụ: Tháng 11/2026 -> 01/2026 nếu có lỗi nhập liệu)
-            # Logic: Nếu tháng > hiện tại quá xa trong bối cảnh dữ liệu tháng 1, đưa về tháng 1
+            # Fix lỗi năm 2026 (nếu có)
             mask_error = (df['Ngày khởi hành'].dt.month > 6) & (df['Ngày khởi hành'].dt.year == 2026)
             if mask_error.any():
                 df.loc[mask_error, 'Ngày khởi hành'] = df.loc[mask_error, 'Ngày khởi hành'].apply(lambda x: x.replace(month=1))
 
-        # 5. XỬ LÝ THÔNG TIN BỔ SUNG
-        # Chuẩn hóa biển số
+        # 5. XỬ LÝ SỐ LIỆU CHI PHÍ (Rất quan trọng để tính đúng tiền)
+        if 'Chi phí' in df.columns:
+            # Chuyển đổi "1,500,000" thành số 1500000. Nếu lỗi thành 0.
+            df['Chi phí'] = df['Chi phí'].astype(str).str.replace(',', '').str.replace('.', '', regex=False)
+            df['Chi phí'] = pd.to_numeric(df['Chi phí'], errors='coerce').fillna(0)
+        else:
+            df['Chi phí'] = 0
+
+        # 6. TÍNH TOÁN THỜI GIAN
+        df['Start'] = pd.to_datetime(df['Ngày khởi hành'].astype(str) + ' ' + df['Giờ khởi hành'].astype(str), errors='coerce')
+        df['End'] = pd.to_datetime(df['Ngày khởi hành'].astype(str) + ' ' + df['Giờ kết thúc'].astype(str), errors='coerce')
+        
+        # Xử lý qua đêm
+        mask_overnight = df['End'] < df['Start']
+        df.loc[mask_overnight, 'End'] += pd.Timedelta(days=1)
+        
+        df['Duration'] = (df['End'] - df['Start']).dt.total_seconds() / 3600
+        
+        # 7. PHÂN LOẠI XE & COST CENTER
         def normalize_plate(plate):
             if not isinstance(plate, str): return ""
             return re.sub(r'[^A-Z0-9]', '', plate.upper())
         
         if 'Biển số xe' in df.columns:
             df['Biển_Clean'] = df['Biển số xe'].apply(normalize_plate)
-        
-        # Giả lập cột 'Phân Loại Xe' (Vì file mới không có sheet Driver riêng)
-        # Logic: Có tên tài xế -> Xe Nội bộ, còn lại coi là Vãng lai (hoặc tùy bạn chỉnh)
+
+        # Phân loại xe (Logic tạm: Có tên tài xế là Nội bộ)
         if 'Phân Loại Xe' not in df.columns:
-            df['Phân Loại Xe'] = df['Tên tài xế'].apply(lambda x: 'Xe Nội bộ' if pd.notna(x) and str(x).strip() != '' else 'Xe Vãng lai')
+             df['Phân Loại Xe'] = df['Tên tài xế'].apply(lambda x: 'Xe Nội bộ' if pd.notna(x) and str(x).strip() != '' else 'Xe Vãng lai')
         
-        # Giả lập cột 'Tình trạng đơn yêu cầu' (Vì log chạy thực tế -> coi là APPROVED)
-        if 'Tình trạng đơn yêu cầu' not in df.columns:
-            df['Tình trạng đơn yêu cầu'] = 'APPROVED'
+        # Điền Unknown cho Cost Center nếu trống
+        if 'Cost Center' not in df.columns: df['Cost Center'] = 'Unknown'
+        df['Cost Center'] = df['Cost Center'].fillna('Unknown').astype(str)
 
-        # Xử lý các cột còn thiếu nếu file không có
-        for col in ['Công ty', 'BU', 'Location']:
-            if col not in df.columns:
-                df[col] = 'Unknown'
-            else:
-                df[col] = df[col].fillna('Unknown').astype(str)
-
-        # 6. TÍNH TOÁN THỜI GIAN (DURATION)
-        # Ghép ngày + giờ
-        df['Start'] = pd.to_datetime(df['Ngày khởi hành'].astype(str) + ' ' + df['Giờ khởi hành'].astype(str), errors='coerce')
-        df['End'] = pd.to_datetime(df['Ngày khởi hành'].astype(str) + ' ' + df['Giờ kết thúc'].astype(str), errors='coerce')
-        
-        # Xử lý qua đêm (Nếu giờ về nhỏ hơn giờ đi -> cộng thêm 1 ngày)
-        mask_overnight = df['End'] < df['Start']
-        df.loc[mask_overnight, 'End'] += pd.Timedelta(days=1)
-        
-        df['Duration'] = (df['End'] - df['Start']).dt.total_seconds() / 3600
-        df['Tháng'] = df['Start'].dt.strftime('%Y-%m')
-
-        # 7. PHÂN LOẠI PHẠM VI (TỈNH/NỘI THÀNH)
-        def check_scope(r):
-            s = str(r).lower()
-            provinces = ['bình dương', 'đồng nai', 'long an', 'bà rịa', 'vũng tàu', 'tây ninh', 'bình phước', 'tiền giang', 'bến tre', 'cần thơ', 'vĩnh long', 'an giang', 'bắc ninh', 'hưng yên', 'hải dương', 'hải phòng', 'vĩnh phúc', 'hà nam', 'nam định', 'thái bình', 'thái nguyên', 'hòa bình', 'bắc giang', 'phú thọ', 'thanh hóa', 'nghệ an', 'phan thiết', 'mũi né', 'trà vinh']
-            if any(p in s for p in provinces): return "Đi Tỉnh"
-            return "Nội thành"
-        
-        df['Phạm Vi'] = df['Lộ trình'].apply(check_scope) if 'Lộ trình' in df.columns else 'Unknown'
-
-        # Tạo report info giả để khớp logic cũ
-        report_info = {
-            'driver_cars_count': df['Biển_Clean'].nunique(),
-            'duplicates_list': [],
-            'internal_dict': {}
-        }
-
-        return df, report_info
+        return df, {}
 
     except Exception as e:
-        return f"❌ Lỗi khi đọc file: {str(e)}", {}
+        return f"❌ Lỗi: {str(e)}", {}
 
 # --- 3. CHART EXPORT ---
 def get_chart_img(data, x, y, kind='bar', title='', color='#0078d4'):
@@ -233,10 +209,17 @@ if uploaded_file:
         
         if type_filter:
             df_filtered = df_filtered[df_filtered['Phân Loại Xe'].isin(type_filter)]
-
+        
         st.markdown("---")
-        st.caption("Drill-down:")
-        # Lấy danh sách Location và Công ty từ dữ liệu đã clean
+        st.caption("Drill-down (Chi tiết):")
+        
+        # --- THÊM PHẦN LỌC COST CENTER Ở ĐÂY ---
+        ccs = ["Tất cả"] + sorted(df_filtered['Cost Center'].unique().tolist())
+        sel_cc = st.selectbox("Cost Center:", ccs)
+        if sel_cc != "Tất cả": 
+            df_filtered = df_filtered[df_filtered['Cost Center'] == sel_cc]
+        # ---------------------------------------
+
         locs = ["Tất cả"] + sorted(df_filtered['Location'].dropna().unique().tolist())
         sel_loc = st.selectbox("Khu vực:", locs)
         if sel_loc != "Tất cả": df_filtered = df_filtered[df_filtered['Location'] == sel_loc]
