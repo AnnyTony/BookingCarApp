@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 
 # --- 1. CẤU HÌNH TRANG ---
 st.set_page_config(
@@ -11,35 +12,47 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# --- CSS TÙY CHỈNH (GIAO DIỆN ĐƠN GIẢN, SẠCH SẼ) ---
+# --- CSS: GIAO DIỆN PHẲNG, DỄ NHÌN ---
 st.markdown("""
 <style>
-    /* Nền trang sáng sủa */
+    /* Nền sáng sủa */
     .stApp { background-color: #f8f9fa; }
     
-    /* Card KPI đơn giản */
-    .kpi-card {
-        background-color: white; border-radius: 10px; padding: 15px;
-        border-top: 4px solid #007bff; /* Màu xanh cơ bản */
-        box-shadow: 0 2px 4px rgba(0,0,0,0.1); text-align: center;
-    }
-    .kpi-title { font-size: 14px; color: #6c757d; font-weight: 600; text-transform: uppercase; }
-    .kpi-value { font-size: 26px; font-weight: 800; color: #343a40; margin-top: 5px; }
-    .kpi-note { font-size: 12px; color: #28a745; font-weight: 500; }
-
-    /* Container cho biểu đồ */
-    .chart-container {
-        background: white; padding: 20px; border-radius: 10px;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.05); margin-bottom: 20px;
+    /* Sidebar đơn giản */
+    [data-testid="stSidebar"] {
+        background-color: white;
+        border-right: 1px solid #dee2e6;
     }
     
+    /* Card (Khung chứa) */
+    .simple-card {
+        background-color: white;
+        padding: 20px;
+        border-radius: 8px;
+        border: 1px solid #e9ecef;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.02);
+        margin-bottom: 20px;
+    }
+    
+    /* KPI Box - To rõ */
+    .kpi-container {
+        background-color: white;
+        padding: 15px;
+        border-radius: 8px;
+        border-left: 5px solid #0d6efd; /* Màu xanh chuẩn */
+        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+    }
+    .kpi-label { font-size: 14px; color: #6c757d; text-transform: uppercase; font-weight: 600; }
+    .kpi-value { font-size: 28px; color: #212529; font-weight: bold; margin: 5px 0; }
+    .kpi-note { font-size: 12px; color: #198754; } /* Màu xanh lá */
+
     /* Tabs */
-    .stTabs [data-baseweb="tab-list"] { background: white; padding: 10px; border-radius: 10px; }
-    .stTabs [aria-selected="true"] { color: #007bff; border-bottom: 2px solid #007bff; font-weight: bold; }
+    .stTabs [data-baseweb="tab-list"] { background: white; padding: 5px; border-radius: 8px; }
+    .stTabs [aria-selected="true"] { color: #0d6efd; font-weight: bold; border-bottom: 2px solid #0d6efd; }
 </style>
 """, unsafe_allow_html=True)
 
-# --- 2. HÀM XỬ LÝ DỮ LIỆU (ĐÃ FIX LỖI SỐ ÂM) ---
+# --- 2. XỬ LÝ DỮ LIỆU (FIX LỖI KM ÂM) ---
 @st.cache_data
 def load_data(file):
     try:
@@ -51,196 +64,250 @@ def load_data(file):
             target = next((s for s in xl.sheet_names if "booking" in s.lower()), xl.sheet_names[0])
             df = pd.read_excel(file, sheet_name=target, header=3)
 
-        # Chuẩn hóa tên cột
         df.columns = [str(c).strip().replace('\n', ' ') for c in df.columns]
         
+        # Map cột
         col_map = {
             'Ngày Tháng Năm': 'Date', 'Biển số xe': 'Car', 'Tên tài xế': 'Driver',
             'Bộ phận': 'Dept', 'Cost center': 'CostCenter', 'Km sử dụng': 'Km',
             'Tổng chi phí': 'Cost', 'Lộ trình': 'Route', 'Người sử dụng xe': 'User',
-            'Chi phí nhiên liệu': 'Fuel', 'Phí cầu đường': 'Toll', 
+            'Chi phí nhiên liệu': 'Fuel', 'Phí cầu đường': 'Toll', 'Sửa chữa': 'Repair',
             'Giờ khởi hành': 'Start_Time', 'Giờ kết thúc': 'End_Time', 'Công Ty': 'Company'
         }
         cols = [c for c in col_map.keys() if c in df.columns]
         df = df[cols].rename(columns=col_map)
         
-        # Xử lý Ngày Tháng
         df.dropna(how='all', inplace=True)
         if 'Date' in df.columns:
             df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
             df = df.dropna(subset=['Date'])
             df['Tháng'] = df['Date'].dt.strftime('%m-%Y')
-            df['SortMonth'] = df['Date'].dt.to_period('M') # Để sắp xếp tháng
+            df['SortMonth'] = df['Date'].dt.to_period('M')
 
-        # Chuyển số liệu & LÀM SẠCH (Quan trọng)
-        for c in ['Km', 'Cost', 'Fuel', 'Toll']:
+        # Chuyển số
+        for c in ['Km', 'Cost', 'Fuel', 'Toll', 'Repair']:
             if c in df.columns: df[c] = pd.to_numeric(df[c], errors='coerce').fillna(0)
             
-        # --- FIX LỖI SỐ ÂM: Chỉ lấy dòng có Km > 0 và Cost >= 0 ---
-        df = df[(df['Km'] > 0) & (df['Cost'] >= 0)]
-
-        # Tính thời gian chạy (Duration) cho biểu đồ Hiệu suất
+        # --- FIX QUAN TRỌNG: Lọc bỏ Km âm hoặc quá lớn (do lỗi nhập liệu) ---
+        if 'Km' in df.columns:
+            # Chỉ lấy các chuyến có Km > 0 và < 5000 (tránh số ảo 200,000km)
+            df = df[(df['Km'] > 0) & (df['Km'] < 5000)]
+            
+        # Xử lý Lộ Trình
+        if 'Route' in df.columns:
+            df['Route'] = df['Route'].astype(str).fillna("")
+            df['Route_Type'] = df['Route'].apply(lambda s: 'Nội Tỉnh' if len(str(s)) < 5 or any(k in str(s).lower() for k in ['hcm', 'sài gòn', 'q1', 'q7', 'city']) else 'Ngoại Tỉnh')
+        
+        # Tính thời gian chạy
         if 'Start_Time' in df.columns and 'End_Time' in df.columns:
-            def calc_hours(row):
+            def calc_duration(row):
                 try:
                     s = pd.to_datetime(str(row['Start_Time']), format='%H:%M:%S', errors='coerce')
                     e = pd.to_datetime(str(row['End_Time']), format='%H:%M:%S', errors='coerce')
-                    diff = (e - s).total_seconds() / 3600
-                    return diff if diff > 0 else 0
+                    if pd.notnull(s) and pd.notnull(e):
+                        diff = (e - s).total_seconds() / 3600
+                        return diff if diff > 0 else 0
+                    return 0
                 except: return 0
-            df['Hours'] = df.apply(calc_hours, axis=1)
+            df['Duration_Hours'] = df.apply(calc_duration, axis=1)
         else:
-            df['Hours'] = 0
+            df['Duration_Hours'] = 0
 
-        # Phân loại Lộ Trình đơn giản
-        if 'Route' in df.columns:
-            df['Route'] = df['Route'].astype(str).fillna("")
-            df['Route_Type'] = df['Route'].apply(lambda s: 'Nội Tỉnh' if any(k in str(s).lower() for k in ['hcm', 'sài gòn', 'q1', 'city']) else 'Ngoại Tỉnh')
-
+        # Làm sạch Text
+        for c in ['Dept', 'Driver', 'Car', 'Company', 'User']:
+            if c in df.columns: df[c] = df[c].astype(str).str.strip()
+            
         return df
     except Exception as e:
         return pd.DataFrame()
 
-# --- 3. GIAO DIỆN CHÍNH ---
-st.title("🚘 Báo Cáo Hoạt Động Đội Xe")
-st.markdown("---")
+# --- 3. UI COMPONENTS ---
+def kpi_card(title, val, unit, color="#0d6efd"):
+    st.markdown(f"""
+    <div class="kpi-container" style="border-left-color: {color}">
+        <div class="kpi-label">{title}</div>
+        <div class="kpi-value">{val}</div>
+        <div class="kpi-note">{unit}</div>
+    </div>
+    """, unsafe_allow_html=True)
 
-# Sidebar: Đơn giản hóa
+# --- 4. MAIN APP ---
+st.title("🚘 Báo Cáo Quản Trị Đội Xe")
+st.caption("Dữ liệu được làm sạch và hiển thị tối giản")
+
+# --- SIDEBAR ---
 with st.sidebar:
     st.header("📂 Dữ Liệu")
-    uploaded_file = st.file_uploader("Chọn file Excel", type=['xlsx', 'csv'])
+    uploaded_file = st.file_uploader("Tải file Excel/CSV", type=['xlsx', 'csv'])
     
     df = pd.DataFrame()
     if uploaded_file: df = load_data(uploaded_file)
 
     if not df.empty:
-        st.write("---")
-        st.header("🔍 Bộ Lọc")
+        st.markdown("---")
+        st.subheader("🔍 Bộ Lọc")
         
-        # Sắp xếp tháng đúng thứ tự
+        # Sort months
         if 'SortMonth' in df.columns:
             months = sorted(df['Tháng'].unique(), key=lambda x: df[df['Tháng']==x]['SortMonth'].iloc[0])
         else: months = sorted(df['Tháng'].unique())
             
-        sel_month = st.multiselect("Chọn Tháng", months, default=months)
-        sel_dept = st.multiselect("Chọn Bộ Phận", sorted(df['Dept'].astype(str).unique()), default=sorted(df['Dept'].astype(str).unique()))
+        sel_month = st.multiselect("Tháng", months, default=months)
+        sel_dept = st.multiselect("Bộ Phận", sorted(df['Dept'].unique()), default=sorted(df['Dept'].unique()))
         
-        # Áp dụng lọc
-        mask = df['Tháng'].isin(sel_month) & df['Dept'].isin(sel_dept)
+        # Filter Logic
+        mask = pd.Series(True, index=df.index)
+        if sel_month: mask &= df['Tháng'].isin(sel_month)
+        if sel_dept: mask &= df['Dept'].isin(sel_dept)
         df_sub = df[mask]
     else: df_sub = pd.DataFrame()
 
 if not df_sub.empty:
-    # --- PHẦN 1: KPI (CON SỐ QUAN TRỌNG NHẤT) ---
+    # --- KPI SUMMARY ---
     c1, c2, c3, c4 = st.columns(4)
-    
     total_cost = df_sub['Cost'].sum()
-    total_km = df_sub['Km'].sum()
+    total_km = df_sub['Km'].sum() # Đã fix lỗi âm
     total_trips = len(df_sub)
-    cost_per_km = total_cost / total_km if total_km > 0 else 0
+    avg_cost = total_cost / total_km if total_km > 0 else 0
+
+    with c1: kpi_card("Tổng Chi Phí", f"{total_cost:,.0f}", "VNĐ", "#dc3545") # Đỏ
+    with c2: kpi_card("Tổng Số Km", f"{total_km:,.0f}", "Km", "#0d6efd") # Xanh
+    with c3: kpi_card("Tổng Số Chuyến", f"{total_trips:,}", "Chuyến", "#198754") # Lục
+    with c4: kpi_card("Trung Bình", f"{avg_cost:,.0f}", "VNĐ/Km", "#ffc107") # Vàng
+
+    st.markdown("<br>", unsafe_allow_html=True)
     
-    with c1: st.markdown(f'<div class="kpi-card"><div class="kpi-title">Tổng Chi Phí</div><div class="kpi-value">{total_cost:,.0f}</div><div class="kpi-note">VNĐ</div></div>', unsafe_allow_html=True)
-    with c2: st.markdown(f'<div class="kpi-card"><div class="kpi-title">Tổng Km Đã Chạy</div><div class="kpi-value">{total_km:,.0f}</div><div class="kpi-note">Km (Đã lọc số âm)</div></div>', unsafe_allow_html=True)
-    with c3: st.markdown(f'<div class="kpi-card"><div class="kpi-title">Số Chuyến Xe</div><div class="kpi-value">{total_trips:,}</div><div class="kpi-note">Chuyến</div></div>', unsafe_allow_html=True)
-    with c4: st.markdown(f'<div class="kpi-card"><div class="kpi-title">Trung Bình / Km</div><div class="kpi-value">{cost_per_km:,.0f}</div><div class="kpi-note">VNĐ / Km</div></div>', unsafe_allow_html=True)
+    # --- TABS ---
+    tab_overview, tab_perf, tab_rank, tab_explore = st.tabs([
+        "📊 Tổng Quan", 
+        "⚡ Hiệu Suất", 
+        "🏆 Xếp Hạng", 
+        "🛠️ Tự Phân Tích"
+    ])
 
-    st.write("")
-
-    # --- PHẦN 2: NỘI DUNG CHÍNH (TABS) ---
-    tab_overview, tab_rank, tab_perf, tab_data = st.tabs(["📊 Tổng Quan", "🏆 Top Xếp Hạng", "⚡ Hiệu Suất Xe", "📄 Dữ Liệu Chi Tiết"])
-
-    # === TAB 1: TỔNG QUAN ===
+    # === TAB 1: TỔNG QUAN (ĐƠN GIẢN HÓA) ===
     with tab_overview:
-        c_left, c_right = st.columns([2, 1])
+        col_L, col_R = st.columns([2, 1])
         
-        with c_left:
-            st.markdown('<div class="chart-container">', unsafe_allow_html=True)
-            st.subheader("📈 Xu Hướng: Chi Phí và Km (Theo Ngày)")
-            # Dùng biểu đồ Combo đơn giản: Cột là Tiền, Dây là Km
+        with col_L:
+            st.markdown('<div class="simple-card">', unsafe_allow_html=True)
+            st.subheader("📈 Xu Hướng Theo Thời Gian")
             daily = df_sub.groupby('Date')[['Cost', 'Km']].sum().reset_index()
             
-            fig_combo = go.Figure()
-            fig_combo.add_trace(go.Bar(x=daily['Date'], y=daily['Cost'], name='Chi Phí (VNĐ)', marker_color='#6c757d', opacity=0.6))
-            fig_combo.add_trace(go.Scatter(x=daily['Date'], y=daily['Km'], name='Số Km', yaxis='y2', line=dict(color='#007bff', width=3)))
+            # Dùng biểu đồ kết hợp (Combo Chart) đơn giản: Cột + Đường
+            fig_trend = make_subplots(specs=[[{"secondary_y": True}]])
             
-            fig_combo.update_layout(
-                yaxis=dict(title="VNĐ"),
-                yaxis2=dict(title="Km", overlaying='y', side='right'),
-                legend=dict(orientation="h", y=1.1),
-                height=400, margin=dict(l=20, r=20, t=40, b=20)
-            )
-            st.plotly_chart(fig_combo, use_container_width=True)
-            st.markdown('</div>', unsafe_allow_html=True)
+            # Cột: Chi phí (Dễ so sánh độ cao thấp)
+            fig_trend.add_trace(go.Bar(x=daily['Date'], y=daily['Cost'], name="Chi Phí (VNĐ)", 
+                                       marker_color='#aacbff', opacity=0.8), secondary_y=False)
             
-        with c_right:
-            st.markdown('<div class="chart-container">', unsafe_allow_html=True)
-            st.subheader("🍩 Cơ Cấu Chi Phí")
-            # Gom nhóm chi phí
-            cost_data = {
-                'Xăng': df_sub['Fuel'].sum(),
-                'Cầu Đường': df_sub['Toll'].sum(),
-                'Khác': df_sub['Cost'].sum() - df_sub['Fuel'].sum() - df_sub['Toll'].sum()
-            }
-            cost_df = pd.DataFrame(list(cost_data.items()), columns=['Loại', 'Tiền'])
-            cost_df = cost_df[cost_df['Tiền'] > 0] # Chỉ hiện cái nào có tiền
+            # Đường: Km (Thấy rõ sự biến động)
+            fig_trend.add_trace(go.Scatter(x=daily['Date'], y=daily['Km'], name="Km Vận Hành", 
+                                           line=dict(color='#0d6efd', width=3)), secondary_y=True)
             
-            fig_pie = px.pie(cost_df, values='Tiền', names='Loại', hole=0.5, color_discrete_sequence=px.colors.qualitative.Pastel)
-            fig_pie.update_traces(textposition='inside', textinfo='percent+label')
-            fig_pie.update_layout(height=400, margin=dict(t=20, b=20, l=20, r=20), showlegend=False)
-            st.plotly_chart(fig_pie, use_container_width=True)
+            fig_trend.update_layout(height=400, hovermode='x unified', showlegend=True, 
+                                    template='plotly_white', margin=dict(t=10, b=10))
+            st.plotly_chart(fig_trend, use_container_width=True)
             st.markdown('</div>', unsafe_allow_html=True)
 
-    # === TAB 2: TOP XẾP HẠNG ===
-    with tab_rank:
-        st.info("💡 Đây là các bảng xếp hạng giúp bạn biết ai/xe nào hoạt động nhiều nhất.")
-        c1, c2 = st.columns(2)
-        
-        with c1:
-            st.markdown('<div class="chart-container">', unsafe_allow_html=True)
-            st.subheader("👮 Top 10 Tài Xế (Km)")
-            top_drv = df_sub.groupby('Driver')['Km'].sum().nlargest(10).reset_index().sort_values('Km')
-            fig_drv = px.bar(top_drv, x='Km', y='Driver', orientation='h', text_auto='.2s', title="", color='Km', color_continuous_scale='Blues')
-            st.plotly_chart(fig_drv, use_container_width=True)
-            st.markdown('</div>', unsafe_allow_html=True)
-            
-        with c2:
-            st.markdown('<div class="chart-container">', unsafe_allow_html=True)
-            st.subheader("🏢 Top 10 Bộ Phận (Chi Phí)")
-            top_dept = df_sub.groupby('Dept')['Cost'].sum().nlargest(10).reset_index().sort_values('Cost')
-            fig_dept = px.bar(top_dept, x='Cost', y='Dept', orientation='h', text_auto='.2s', title="", color='Cost', color_continuous_scale='Reds')
-            st.plotly_chart(fig_dept, use_container_width=True)
+        with col_R:
+            st.markdown('<div class="simple-card">', unsafe_allow_html=True)
+            st.subheader("🏢 Phân Bổ Theo Công Ty")
+            if 'Company' in df_sub.columns:
+                comp_stats = df_sub['Company'].value_counts().reset_index()
+                comp_stats.columns = ['Công Ty', 'Số Chuyến']
+                fig_comp = px.pie(comp_stats, values='Số Chuyến', names='Công Ty', 
+                                  hole=0.5, # Donut chart dễ nhìn hơn Pie
+                                  color_discrete_sequence=px.colors.qualitative.Pastel)
+                fig_comp.update_layout(height=400, margin=dict(t=10, b=10))
+                st.plotly_chart(fig_comp, use_container_width=True)
+            else: st.info("Không có dữ liệu Công ty")
             st.markdown('</div>', unsafe_allow_html=True)
 
-    # === TAB 3: HIỆU SUẤT (ĐƠN GIẢN HÓA) ===
+    # === TAB 2: HIỆU SUẤT (RÕ RÀNG HƠN) ===
     with tab_perf:
+        st.info("💡 Hiệu suất giúp bạn biết xe nào hoạt động hiệu quả, xe nào 'ngồi chơi xơi nước'.")
+        
         c1, c2 = st.columns(2)
         
+        # 1. Công suất (Utilization) -> Dạng Cột đơn giản
         with c1:
-            st.markdown('<div class="chart-container">', unsafe_allow_html=True)
-            st.subheader("⏳ Top Xe Bận Rộn Nhất (Giờ hoạt động)")
-            st.caption("Xe nào chạy nhiều giờ nhất trong tháng?")
+            st.markdown('<div class="simple-card">', unsafe_allow_html=True)
+            st.subheader("📊 Tỷ Lệ Xe Hoạt Động (% Ngày)")
+            total_cars = df['Car'].nunique()
+            daily_active = df_sub.groupby('Date')['Car'].nunique().reset_index()
+            daily_active['Pct'] = (daily_active['Car'] / total_cars) * 100
             
-            top_busy = df_sub.groupby('Car')['Hours'].sum().nlargest(10).reset_index().sort_values('Hours')
-            fig_busy = px.bar(top_busy, x='Hours', y='Car', orientation='h', text_auto='.0f', color='Hours', color_continuous_scale='Greens')
-            fig_busy.update_layout(xaxis_title="Tổng Giờ Chạy", yaxis_title="")
-            st.plotly_chart(fig_busy, use_container_width=True)
+            fig_util = px.bar(daily_active, x='Date', y='Pct', 
+                              labels={'Pct': '% Xe hoạt động'}, 
+                              title="Ngày nào xe đi nhiều nhất?",
+                              color_discrete_sequence=['#198754'])
+            fig_util.update_layout(height=350, template='plotly_white')
+            st.plotly_chart(fig_util, use_container_width=True)
+            st.markdown('</div>', unsafe_allow_html=True)
+            
+        # 2. Scatter Plot (Giữ lại nhưng thêm chú thích dễ hiểu)
+        with c2:
+            st.markdown('<div class="simple-card">', unsafe_allow_html=True)
+            st.subheader("🎯 Tương Quan: Chi Phí vs Quãng Đường")
+            car_perf = df_sub.groupby('Car')[['Cost', 'Km']].sum().reset_index()
+            car_perf = car_perf[car_perf['Km'] > 0]
+            
+            fig_sc = px.scatter(car_perf, x='Km', y='Cost', size='Km', color='Car',
+                                labels={'Km': 'Quãng đường (Km)', 'Cost': 'Tổng tiền (VNĐ)'},
+                                title="Bóng to = Xe chạy nhiều")
+            st.plotly_chart(fig_sc, use_container_width=True)
+            st.caption("Gợi ý: Các chấm nằm góc trên bên trái là xe tốn tiền nhưng đi ít.")
+            st.markdown('</div>', unsafe_allow_html=True)
+
+    # === TAB 3: XẾP HẠNG (GIỮ NGUYÊN) ===
+    with tab_rank:
+        c1, c2 = st.columns(2)
+        with c1:
+            st.markdown('<div class="simple-card">', unsafe_allow_html=True)
+            st.subheader("🏆 Top Tài Xế (Km)")
+            top_driver = df_sub.groupby('Driver')['Km'].sum().nlargest(10).reset_index().sort_values('Km')
+            fig = px.bar(top_driver, x='Km', y='Driver', orientation='h', text_auto='.0f', color_discrete_sequence=['#0dcaf0'])
+            st.plotly_chart(fig, use_container_width=True)
             st.markdown('</div>', unsafe_allow_html=True)
             
         with c2:
-            st.markdown('<div class="chart-container">', unsafe_allow_html=True)
-            st.subheader("📉 Công Suất Đội Xe Theo Ngày")
-            st.caption("Mỗi ngày có bao nhiêu xe lăn bánh?")
-            
-            daily_active = df_sub.groupby('Date')['Car'].nunique().reset_index()
-            fig_line = px.line(daily_active, x='Date', y='Car', markers=True, title="")
-            fig_line.update_traces(line_color='#28a745', line_width=3)
-            fig_line.update_layout(yaxis_title="Số lượng xe")
-            st.plotly_chart(fig_line, use_container_width=True)
+            st.markdown('<div class="simple-card">', unsafe_allow_html=True)
+            st.subheader("👥 Top Người Dùng (Chi Phí)")
+            top_user = df_sub.groupby('User')['Cost'].sum().nlargest(10).reset_index().sort_values('Cost')
+            fig = px.bar(top_user, x='Cost', y='User', orientation='h', text_auto='.2s', color_discrete_sequence=['#6f42c1'])
+            st.plotly_chart(fig, use_container_width=True)
             st.markdown('</div>', unsafe_allow_html=True)
 
-    # === TAB 4: DỮ LIỆU ===
-    with tab_data:
-        st.dataframe(df_sub.style.format({"Cost": "{:,.0f}", "Km": "{:,.0f}"}))
+    # === TAB 4: TỰ PHÂN TÍCH (SELF-SERVICE) ===
+    with tab_explore:
+        st.markdown('<div class="simple-card">', unsafe_allow_html=True)
+        st.subheader("🛠️ Công Cụ Tự Tạo Biểu Đồ")
+        st.caption("Chọn thông tin bạn muốn xem, hệ thống sẽ tự vẽ.")
+        
+        c1, c2, c3, c4 = st.columns(4)
+        with c1: chart_type = st.selectbox("1. Kiểu biểu đồ", ["Cột", "Đường", "Bánh", "Cột Ngang"])
+        with c2: 
+            dim_map = {'Dept': 'Bộ Phận', 'Driver': 'Tài Xế', 'Car': 'Xe', 'Tháng': 'Tháng', 'Company': 'Công Ty'}
+            valid_dims = [k for k in dim_map.keys() if k in df_sub.columns]
+            x_axis = st.selectbox("2. Nhóm theo", valid_dims, format_func=lambda x: dim_map[x])
+        with c3: 
+            met_map = {'Cost': 'Chi Phí', 'Km': 'Số Km', 'Fuel': 'Tiền Xăng'}
+            y_axis = st.selectbox("3. Số liệu", [k for k in met_map.keys() if k in df_sub.columns], format_func=lambda x: met_map[x])
+        with c4: color_by = st.selectbox("4. Màu sắc (Tùy chọn)", ["None"] + [k for k in valid_dims if k != x_axis])
+
+        grp = [x_axis]
+        if color_by != "None": grp.append(color_by)
+        df_chart = df_sub.groupby(grp, as_index=False)[y_axis].sum()
+        
+        title = f"{met_map[y_axis]} theo {dim_map[x_axis]}"
+        if chart_type == "Cột": fig = px.bar(df_chart, x=x_axis, y=y_axis, color=color_by if color_by!="None" else None, title=title)
+        elif chart_type == "Cột Ngang": fig = px.bar(df_chart.sort_values(y_axis), x=y_axis, y=x_axis, orientation='h', title=title)
+        elif chart_type == "Bánh": fig = px.pie(df_chart, values=y_axis, names=x_axis, title=title)
+        elif chart_type == "Đường": fig = px.line(df_chart, x=x_axis, y=y_axis, markers=True, title=title)
+        
+        st.plotly_chart(fig, use_container_width=True)
+        st.markdown('</div>', unsafe_allow_html=True)
 
 else:
     st.info("👋 Vui lòng tải file Excel lên để bắt đầu.")
