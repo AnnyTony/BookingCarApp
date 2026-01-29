@@ -114,7 +114,11 @@ with st.sidebar:
 
     if not df.empty:
         st.divider()
-        months = sorted(df['Tháng'].unique())
+        if 'SortMonth' in df.columns:
+            months = sorted(df['Tháng'].unique(), key=lambda x: df[df['Tháng']==x]['SortMonth'].iloc[0])
+        else:
+            months = sorted(df['Tháng'].unique())
+            
         sel_month = st.multiselect("Tháng", months, default=months)
         
         depts = sorted(df['Dept'].dropna().unique())
@@ -146,7 +150,7 @@ if not df_sub.empty:
     st.write("")
 
     # --- MAIN TABS ---
-    tab1, tab2, tab3 = st.tabs(["📊 Tổng Quan & Xu Hướng", "🏆 Bảng Xếp Hạng (Top)", "📄 Dữ Liệu Chi Tiết"])
+    tab1, tab2, tab3, tab4 = st.tabs(["📊 Tổng Quan & Xu Hướng", "🏆 Bảng Xếp Hạng (Top)", "🛠️ Tự Do Phân Tích", "📄 Dữ Liệu Chi Tiết"])
 
     # === TAB 1: TỔNG QUAN ===
     with tab1:
@@ -193,23 +197,21 @@ if not df_sub.empty:
             # Gom theo xe
             car_perf = df_sub.groupby('Car')[['Cost', 'Km']].sum().reset_index()
             
-            # --- FIX LỖI: Lọc bỏ các xe có Km <= 0 để tránh lỗi 'size' và chia cho 0 ---
+            # --- FIX: Lọc bỏ Km <= 0 để tránh lỗi Scatter ---
             car_perf_clean = car_perf[car_perf['Km'] > 0].copy()
             
             if not car_perf_clean.empty:
-                # Tính Cost/Km
                 car_perf_clean['AVG'] = car_perf_clean['Cost'] / car_perf_clean['Km']
                 
                 fig_scatter = px.scatter(car_perf_clean, x='Km', y='Cost', color='Car', size='Km',
                                          title="Tương quan: Đi nhiều (Phải) vs Tốn tiền (Trên)",
                                          hover_data={'AVG': ':.0f', 'Cost': ':.0f', 'Km': ':.0f', 'Car': False})
                 
-                # Kẻ đường trung bình
                 fig_scatter.add_shape(type="line", x0=0, y0=0, x1=car_perf_clean['Km'].max(), y1=car_perf_clean['Cost'].max(),
                                       line=dict(color="Gray", dash="dash"))
                 st.plotly_chart(fig_scatter, use_container_width=True)
             else:
-                st.info("Không có dữ liệu xe hoạt động (Km > 0) để vẽ biểu đồ này.")
+                st.info("Chưa đủ dữ liệu xe hoạt động (Km > 0)")
                 
             st.markdown('</div>', unsafe_allow_html=True)
 
@@ -228,8 +230,6 @@ if not df_sub.empty:
                 fig_user = px.bar(top_user, x='Cost', y='User', orientation='h', text_auto='.2s', 
                                   color='Cost', color_continuous_scale='Purples')
                 st.plotly_chart(fig_user, use_container_width=True)
-            else:
-                st.warning("Không tìm thấy cột 'Người sử dụng xe'")
             st.markdown('</div>', unsafe_allow_html=True)
 
         # 2. Top Xe Ngốn Xăng
@@ -238,14 +238,11 @@ if not df_sub.empty:
             st.subheader("⛽ Top Xe Tiêu Thụ Nhiên Liệu (VNĐ)")
             if 'Fuel' in df_sub.columns:
                 top_fuel = df_sub.groupby('Car')['Fuel'].sum().nlargest(10).reset_index().sort_values('Fuel')
-                # Lọc bỏ giá trị âm hoặc 0 để vẽ đẹp hơn
                 top_fuel = top_fuel[top_fuel['Fuel'] > 0]
                 if not top_fuel.empty:
                     fig_fuel = px.bar(top_fuel, x='Fuel', y='Car', orientation='h', text_auto='.2s', 
                                       color='Fuel', color_continuous_scale='Reds')
                     st.plotly_chart(fig_fuel, use_container_width=True)
-            else:
-                st.warning("Không có dữ liệu nhiên liệu")
             st.markdown('</div>', unsafe_allow_html=True)
 
         col_top3, col_top4 = st.columns(2)
@@ -271,8 +268,77 @@ if not df_sub.empty:
             st.plotly_chart(fig_dept, use_container_width=True)
             st.markdown('</div>', unsafe_allow_html=True)
 
-    # === TAB 3: DATA ===
+    # === TAB 3: TỰ DO PHÂN TÍCH (SELF-SERVICE) - ĐÃ KHÔI PHỤC ===
     with tab3:
+        st.markdown("""
+        <div style="background-color:#e0f2fe; padding:15px; border-radius:10px; margin-bottom:20px; border:1px solid #bae6fd;">
+            <strong>💡 Chế độ Chuyên Gia:</strong> Bạn hãy tự chọn các tiêu chí bên dưới để vẽ biểu đồ theo ý muốn.
+        </div>
+        """, unsafe_allow_html=True)
+        
+        # Controls Row
+        c1, c2, c3, c4 = st.columns(4)
+        
+        with c1:
+            chart_type = st.selectbox("1. Loại Biểu Đồ", 
+                                    ["Cột (Bar)", "Đường (Line)", "Vùng (Area)", "Bánh (Pie)", "Phân Tán (Scatter)", "Cột Ngang (H-Bar)"])
+        
+        with c2:
+            dim_map = {'Dept': 'Bộ Phận', 'Driver': 'Tài Xế', 'Car': 'Xe', 'Tháng': 'Tháng', 
+                       'CostCenter': 'Cost Center', 'Route_Type': 'Lộ Trình', 'User': 'Người Dùng'}
+            valid_dims = [k for k in dim_map.keys() if k in df_sub.columns]
+            x_axis = st.selectbox("2. Trục X (Phân nhóm)", valid_dims, format_func=lambda x: dim_map[x])
+            
+        with c3:
+            metric_map = {'Cost': 'Tổng Chi Phí', 'Km': 'Số Km', 'Fuel': 'Tiền Xăng', 'Toll': 'Phí Cầu Đường', 'Repair': 'Sửa Chữa'}
+            valid_metrics = [k for k in metric_map.keys() if k in df_sub.columns]
+            y_axis = st.selectbox("3. Trục Y (Giá trị)", valid_metrics, format_func=lambda x: metric_map[x])
+            
+        with c4:
+            # Color logic: Không được chọn trùng với X
+            color_opts = ["None"] + [k for k in valid_dims if k != x_axis]
+            color_by = st.selectbox("4. Phân Màu (Tùy chọn)", color_opts, format_func=lambda x: dim_map.get(x, x))
+
+        # Vẽ biểu đồ động
+        st.markdown("---")
+        
+        # Logic GroupBy an toàn
+        grp_cols = [x_axis]
+        if color_by != "None": grp_cols.append(color_by)
+        
+        # as_index=False để tránh lỗi trùng index
+        df_chart = df_sub.groupby(grp_cols, as_index=False)[y_axis].sum()
+        
+        # Title động
+        chart_title = f"Biểu đồ {metric_map[y_axis]} theo {dim_map[x_axis]}"
+        
+        # Switch case vẽ
+        if chart_type == "Cột (Bar)":
+            fig = px.bar(df_chart, x=x_axis, y=y_axis, color=color_by if color_by!="None" else None, 
+                         text_auto='.2s', title=chart_title)
+        elif chart_type == "Cột Ngang (H-Bar)":
+            df_chart = df_chart.sort_values(y_axis, ascending=True)
+            fig = px.bar(df_chart, x=y_axis, y=x_axis, color=color_by if color_by!="None" else None, 
+                         orientation='h', text_auto='.2s', title=chart_title)
+        elif chart_type == "Đường (Line)":
+            fig = px.line(df_chart, x=x_axis, y=y_axis, color=color_by if color_by!="None" else None, 
+                          markers=True, title=chart_title)
+        elif chart_type == "Vùng (Area)":
+            fig = px.area(df_chart, x=x_axis, y=y_axis, color=color_by if color_by!="None" else None, title=chart_title)
+        elif chart_type == "Bánh (Pie)":
+            # Pie chỉ nên dùng 1 chiều
+            fig = px.pie(df_chart, names=x_axis, values=y_axis, title=chart_title)
+        elif chart_type == "Phân Tán (Scatter)":
+            fig = px.scatter(df_chart, x=x_axis, y=y_axis, color=color_by if color_by!="None" else None, 
+                             size=y_axis, title=chart_title)
+
+        st.plotly_chart(fig, use_container_width=True)
+        
+        with st.expander("Xem số liệu nguồn"):
+            st.dataframe(df_chart)
+
+    # === TAB 4: DATA ===
+    with tab4:
         st.dataframe(df_sub.style.format({"Cost": "{:,.0f}", "Km": "{:,.0f}", "Fuel": "{:,.0f}"}))
 
 else:
