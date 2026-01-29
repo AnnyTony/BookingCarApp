@@ -185,7 +185,7 @@ if not df_sub.empty:
         "🛠️ Tự Phân Tích"
     ])
 
-    # === TAB 1: TỔNG QUAN (ĐƠN GIẢN HÓA) ===
+    # === TAB 1: TỔNG QUAN ===
     with tab_overview:
         col_L, col_R = st.columns([2, 1])
         
@@ -194,14 +194,10 @@ if not df_sub.empty:
             st.subheader("📈 Xu Hướng Theo Thời Gian")
             daily = df_sub.groupby('Date')[['Cost', 'Km']].sum().reset_index()
             
-            # Dùng biểu đồ kết hợp (Combo Chart) đơn giản: Cột + Đường
+            # Combo Chart
             fig_trend = make_subplots(specs=[[{"secondary_y": True}]])
-            
-            # Cột: Chi phí (Dễ so sánh độ cao thấp)
             fig_trend.add_trace(go.Bar(x=daily['Date'], y=daily['Cost'], name="Chi Phí (VNĐ)", 
                                        marker_color='#aacbff', opacity=0.8), secondary_y=False)
-            
-            # Đường: Km (Thấy rõ sự biến động)
             fig_trend.add_trace(go.Scatter(x=daily['Date'], y=daily['Km'], name="Km Vận Hành", 
                                            line=dict(color='#0d6efd', width=3)), secondary_y=True)
             
@@ -217,20 +213,23 @@ if not df_sub.empty:
                 comp_stats = df_sub['Company'].value_counts().reset_index()
                 comp_stats.columns = ['Công Ty', 'Số Chuyến']
                 fig_comp = px.pie(comp_stats, values='Số Chuyến', names='Công Ty', 
-                                  hole=0.5, # Donut chart dễ nhìn hơn Pie
-                                  color_discrete_sequence=px.colors.qualitative.Pastel)
+                                  hole=0.5, color_discrete_sequence=px.colors.qualitative.Pastel)
                 fig_comp.update_layout(height=400, margin=dict(t=10, b=10))
                 st.plotly_chart(fig_comp, use_container_width=True)
             else: st.info("Không có dữ liệu Công ty")
             st.markdown('</div>', unsafe_allow_html=True)
+        
+        # --- NEW: Bảng dữ liệu chi tiết ---
+        with st.expander("📄 Xem chi tiết dữ liệu (Danh sách chuyến xe)"):
+            st.dataframe(df_sub.style.format({"Cost": "{:,.0f}", "Km": "{:,.0f}"}), use_container_width=True)
 
-    # === TAB 2: HIỆU SUẤT (RÕ RÀNG HƠN) ===
+    # === TAB 2: HIỆU SUẤT ===
     with tab_perf:
         st.info("💡 Hiệu suất giúp bạn biết xe nào hoạt động hiệu quả, xe nào 'ngồi chơi xơi nước'.")
         
         c1, c2 = st.columns(2)
         
-        # 1. Công suất (Utilization) -> Dạng Cột đơn giản
+        # 1. Công suất
         with c1:
             st.markdown('<div class="simple-card">', unsafe_allow_html=True)
             st.subheader("📊 Tỷ Lệ Xe Hoạt Động (% Ngày)")
@@ -238,15 +237,13 @@ if not df_sub.empty:
             daily_active = df_sub.groupby('Date')['Car'].nunique().reset_index()
             daily_active['Pct'] = (daily_active['Car'] / total_cars) * 100
             
-            fig_util = px.bar(daily_active, x='Date', y='Pct', 
-                              labels={'Pct': '% Xe hoạt động'}, 
-                              title="Ngày nào xe đi nhiều nhất?",
-                              color_discrete_sequence=['#198754'])
+            fig_util = px.bar(daily_active, x='Date', y='Pct', labels={'Pct': '% Xe hoạt động'}, 
+                              title="Ngày nào xe đi nhiều nhất?", color_discrete_sequence=['#198754'])
             fig_util.update_layout(height=350, template='plotly_white')
             st.plotly_chart(fig_util, use_container_width=True)
             st.markdown('</div>', unsafe_allow_html=True)
             
-        # 2. Scatter Plot (Giữ lại nhưng thêm chú thích dễ hiểu)
+        # 2. Scatter Plot
         with c2:
             st.markdown('<div class="simple-card">', unsafe_allow_html=True)
             st.subheader("🎯 Tương Quan: Chi Phí vs Quãng Đường")
@@ -259,8 +256,17 @@ if not df_sub.empty:
             st.plotly_chart(fig_sc, use_container_width=True)
             st.caption("Gợi ý: Các chấm nằm góc trên bên trái là xe tốn tiền nhưng đi ít.")
             st.markdown('</div>', unsafe_allow_html=True)
+            
+        # --- NEW: Bảng dữ liệu hiệu suất ---
+        with st.expander("📄 Xem bảng tổng hợp hiệu suất xe"):
+            car_perf['Avg_Cost_Km'] = car_perf['Cost'] / car_perf['Km']
+            st.dataframe(car_perf.style.format({
+                "Cost": "{:,.0f}", 
+                "Km": "{:,.0f}", 
+                "Avg_Cost_Km": "{:,.0f}"
+            }), use_container_width=True)
 
-    # === TAB 3: XẾP HẠNG (GIỮ NGUYÊN) ===
+    # === TAB 3: XẾP HẠNG ===
     with tab_rank:
         c1, c2 = st.columns(2)
         with c1:
@@ -278,8 +284,18 @@ if not df_sub.empty:
             fig = px.bar(top_user, x='Cost', y='User', orientation='h', text_auto='.2s', color_discrete_sequence=['#6f42c1'])
             st.plotly_chart(fig, use_container_width=True)
             st.markdown('</div>', unsafe_allow_html=True)
+            
+        # --- NEW: Bảng xếp hạng chi tiết ---
+        with st.expander("📄 Xem danh sách xếp hạng chi tiết"):
+            col_a, col_b = st.columns(2)
+            with col_a:
+                st.write("**Top Tài Xế**")
+                st.dataframe(top_driver.style.format({"Km": "{:,.0f}"}), use_container_width=True)
+            with col_b:
+                st.write("**Top Người Dùng**")
+                st.dataframe(top_user.style.format({"Cost": "{:,.0f}"}), use_container_width=True)
 
-    # === TAB 4: TỰ PHÂN TÍCH (SELF-SERVICE) ===
+    # === TAB 4: TỰ PHÂN TÍCH ===
     with tab_explore:
         st.markdown('<div class="simple-card">', unsafe_allow_html=True)
         st.subheader("🛠️ Công Cụ Tự Tạo Biểu Đồ")
@@ -307,6 +323,12 @@ if not df_sub.empty:
         elif chart_type == "Đường": fig = px.line(df_chart, x=x_axis, y=y_axis, markers=True, title=title)
         
         st.plotly_chart(fig, use_container_width=True)
+        
+        # --- NEW: Bảng dữ liệu tự phân tích ---
+        st.write("---")
+        st.write("#### 📄 Dữ liệu chi tiết cho biểu đồ trên:")
+        st.dataframe(df_chart.style.format({y_axis: "{:,.0f}"}), use_container_width=True)
+        
         st.markdown('</div>', unsafe_allow_html=True)
 
 else:
