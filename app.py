@@ -220,6 +220,7 @@ if uploaded_file:
                 cost_sum = df_sub[list(valid_cost_cols.keys())].sum().rename(index=valid_cost_cols).reset_index()
                 cost_sum.columns = ['Loại Chi Phí', 'Giá Trị']
                 
+                # --- SỬA LỖI: Dùng px.pie với hole thay vì px.donut ---
                 fig_struct = px.pie(cost_sum, values='Giá Trị', names='Loại Chi Phí', hole=0.4, 
                                     color_discrete_sequence=px.colors.qualitative.Pastel)
                 st.plotly_chart(fig_struct, use_container_width=True)
@@ -266,7 +267,10 @@ if uploaded_file:
                 st.subheader("Tỷ Lệ Nội Tỉnh vs Ngoại Tỉnh")
                 route_type = df_sub['Route_Type'].value_counts().reset_index()
                 route_type.columns = ['Loại', 'Số chuyến']
-                fig_route = px.donut(route_type, values='Số chuyến', names='Loại', color_discrete_sequence=['#2ecc71', '#e67e22'])
+                
+                # --- SỬA LỖI: Dùng px.pie với hole thay vì px.donut ---
+                fig_route = px.pie(route_type, values='Số chuyến', names='Loại', hole=0.5, 
+                                   color_discrete_sequence=['#2ecc71', '#e67e22'])
                 st.plotly_chart(fig_route, use_container_width=True)
             
             with c2:
