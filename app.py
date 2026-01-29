@@ -60,6 +60,7 @@ def load_and_process_data(file):
             df = pd.read_csv(file, header=3)
         else:
             xl = pd.ExcelFile(file)
+            # Tìm sheet Booking Car, nếu không thấy thì lấy sheet đầu
             target_sheet = next((s for s in xl.sheet_names if "booking" in s.lower() and "car" in s.lower()), xl.sheet_names[0])
             df = pd.read_excel(file, sheet_name=target_sheet, header=3)
 
@@ -101,18 +102,18 @@ def load_and_process_data(file):
             if col in df.columns:
                 df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
 
-        # Tạo cột Cost_Other
+        # Tạo cột Cost_Other (Các chi phí khác chưa định danh)
         known_cols = [c for c in num_cols if c in df.columns and c not in ['Total_Cost', 'Km_Used']]
         if known_cols:
             df['Cost_Other'] = df['Total_Cost'] - df[known_cols].sum(axis=1)
-            df['Cost_Other'] = df['Cost_Other'].clip(lower=0) # Không để âm
+            df['Cost_Other'] = df['Cost_Other'].clip(lower=0)
         
-        # Phân loại lộ trình
+        # Phân loại lộ trình (Nội tỉnh vs Ngoại tỉnh)
         if 'Route' in df.columns:
             df['Route'] = df['Route'].astype(str).fillna("")
             df['Route_Type'] = df['Route'].apply(lambda x: 'Nội Tỉnh' if len(str(x)) < 5 or any(k in str(x).lower() for k in ['hcm', 'sài gòn', 'q1', 'q7', 'city']) else 'Ngoại Tỉnh')
         
-        # Làm sạch cột phân loại
+        # Làm sạch chuỗi
         for col in ['Department', 'Cost_Center', 'Car_Plate', 'Driver']:
             if col in df.columns:
                 df[col] = df[col].astype(str).str.strip()
@@ -229,7 +230,7 @@ if not df_sub.empty:
             st.plotly_chart(fig_driver, use_container_width=True)
             st.markdown('</div>', unsafe_allow_html=True)
 
-    # === TAB 2: SELF-SERVICE ANALYTICS (TÍNH NĂNG MỚI) ===
+    # === TAB 2: SELF-SERVICE ANALYTICS (FIXED) ===
     with tab_explore:
         st.markdown("""
         <div style="background-color:#e0f2fe; padding:15px; border-radius:10px; margin-bottom:20px; border:1px solid #bae6fd;">
@@ -256,25 +257,27 @@ if not df_sub.empty:
         # 4. Màu sắc (Optional)
         color_by = col_ctrl4.selectbox("4. Phân màu theo (Tùy chọn)", ["None"] + valid_cat_cols)
 
-        # --- XỬ LÝ VẼ BIỂU ĐỒ ĐỘNG ---
+        # --- XỬ LÝ VẼ BIỂU ĐỒ ĐỘNG (ĐÃ FIX LỖI TRÙNG CỘT) ---
         st.markdown("---")
         
-        # Gom nhóm dữ liệu
-        if color_by != "None":
-            group_cols = [x_axis, color_by]
-        else:
-            group_cols = [x_axis]
+        # Logic Fix: Nếu người dùng chọn Color trùng với X-axis thì bỏ qua Color
+        actual_color = None
+        group_cols = [x_axis]
+        
+        if color_by != "None" and color_by != x_axis:
+            actual_color = color_by
+            group_cols.append(color_by)
             
-        # Groupby & Sum
-        df_grouped = df_sub.groupby(group_cols)[y_axis].sum().reset_index()
+        # Groupby & Sum - Dùng as_index=False để tránh lỗi 'cannot insert already exists'
+        df_grouped = df_sub.groupby(group_cols, as_index=False)[y_axis].sum()
         
         # Vẽ
         if chart_type == "Bar Chart (Cột)":
-            fig_custom = px.bar(df_grouped, x=x_axis, y=y_axis, color=color_by if color_by != "None" else None, 
+            fig_custom = px.bar(df_grouped, x=x_axis, y=y_axis, color=actual_color, 
                                 text_auto='.2s', title=f"Biểu đồ {y_axis} theo {x_axis}")
             
         elif chart_type == "Line Chart (Đường)":
-            fig_custom = px.line(df_grouped, x=x_axis, y=y_axis, color=color_by if color_by != "None" else None, 
+            fig_custom = px.line(df_grouped, x=x_axis, y=y_axis, color=actual_color, 
                                  markers=True, title=f"Xu hướng {y_axis} theo {x_axis}")
             
         elif chart_type == "Pie Chart (Tròn)":
@@ -282,11 +285,11 @@ if not df_sub.empty:
             fig_custom = px.pie(df_grouped, names=x_axis, values=y_axis, title=f"Tỷ trọng {y_axis} theo {x_axis}")
             
         elif chart_type == "Area (Vùng)":
-            fig_custom = px.area(df_grouped, x=x_axis, y=y_axis, color=color_by if color_by != "None" else None,
+            fig_custom = px.area(df_grouped, x=x_axis, y=y_axis, color=actual_color,
                                  title=f"Vùng giá trị {y_axis} theo {x_axis}")
                                  
         elif chart_type == "Scatter (Phân tán)":
-            fig_custom = px.scatter(df_grouped, x=x_axis, y=y_axis, color=color_by if color_by != "None" else None,
+            fig_custom = px.scatter(df_grouped, x=x_axis, y=y_axis, color=actual_color,
                                     size=y_axis, title=f"Phân tán {y_axis} theo {x_axis}")
 
         st.plotly_chart(fig_custom, use_container_width=True)
